@@ -40,7 +40,7 @@ struct RunOptions {
     /// Member id
     member_id: String,
 
-    #[structopt(default_value = "e890ad24d909477398672ead4ad6b74dee27c39a180aa990a7501bc0ec74b516", short, long)]
+    #[structopt(default_value = "", short, long)]
     /// Member key to sign requests
     key: String,
 }
