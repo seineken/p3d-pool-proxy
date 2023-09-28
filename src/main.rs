@@ -8,6 +8,7 @@ use crate::rpc::P3dParams;
 
 mod rpc;
 mod worker;
+mod pool_rpc;
 
 #[derive(Debug, StructOpt)]
 enum SubCommand {
@@ -24,7 +25,7 @@ struct RunOptions {
     /// Mining algorithm. Supported algorithms: grid2d, grid2d_v2, grid2d_v3
     algo: String,
 
-    #[structopt(default_value = "0.0.0.0:3333", short, long)]
+    #[structopt(default_value = "0.0.0.0:3334", short, long)]
     /// Pool url
     pool_url: String,
 
@@ -92,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
                 opt.pool_id,
                 opt.member_id,
                 opt.key,
-            )?;
+            ).await?;
 
             let ctx = Arc::new(ctx);
             tokio::spawn(worker::queue_management(ctx.clone()));

@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "1"
 structopt = "0.3.13"
 futures = "0.3"
-jsonrpsee = { version = "0.20.0", features = ["server", "http-client", "ws-client", "macros", "client-ws-transport-native-tls"] }
+jsonrpsee = { version = "0.20.1", features = ["server", "client", "macros"] }
 tracing = "0.1.34"
 tracing-subscriber = { version = "0.3.3", features = ["env-filter"] }
 tokio = { version = "1.16", features = ["full"] }

@@ -17,8 +17,14 @@ use serde::Serialize;
 pub(crate) struct MiningParams {
     pub(crate) pre_hash: H256,
     pub(crate) parent_hash: H256,
+    pub(crate) win_difficulty: U256,
     pub(crate) pow_difficulty: U256,
     pub(crate) pub_key: ecies_ed25519::PublicKey,
+}
+
+pub(crate) struct MiningObj {
+    pub(crate) obj_id: u64,
+    pub(crate) obj: Vec<u8>,
 }
 
 #[derive(Clone, Encode)]
@@ -30,13 +36,13 @@ pub(crate) enum AlgoType {
 }
 
 impl AlgoType {
-    // pub(crate) fn as_p3d_algo(&self) -> p3d::AlgoType {
-    //     match self {
-    //         Self::Grid2d => p3d::AlgoType::Grid2d,
-    //         Self::Grid2dV2 => p3d::AlgoType::Grid2dV2,
-    //         Self::Grid2dV3 | Self::Grid2dV3_1 => p3d::AlgoType::Grid2dV3,
-    //     }
-    // }
+    pub(crate) fn as_p3d_algo(&self) -> p3d::AlgoType {
+        match self {
+            Self::Grid2d => p3d::AlgoType::Grid2d,
+            Self::Grid2dV2 => p3d::AlgoType::Grid2dV2,
+            Self::Grid2dV3 | Self::Grid2dV3_1 => p3d::AlgoType::Grid2dV3,
+        }
+    }
 
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
@@ -51,11 +57,14 @@ impl AlgoType {
 #[derive(Clone)]
 pub(crate) struct P3dParams {
     pub(crate) algo: AlgoType,
+    pub(crate) grid: usize,
+    pub(crate) sect: usize,
 }
 
 impl P3dParams {
     pub(crate) fn new(ver: &str) -> Self {
-        let (algo, _sect) = match ver {
+        let grid = 8;
+        let (algo, sect) = match ver {
             "grid2d" => (AlgoType::Grid2d, 66),
             "grid2d_v2" => (AlgoType::Grid2dV2, 12),
             "grid2d_v3" => (AlgoType::Grid2dV3, 12),
@@ -63,7 +72,7 @@ impl P3dParams {
             _ => panic!("Unknown algorithm: {}", ver),
         };
 
-        Self { algo }
+        Self { algo, grid, sect }
     }
 }
 
@@ -80,6 +89,7 @@ pub(crate) struct Payload {
     pub(crate) obj: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub(crate) struct MiningProposal {
     pub(crate) params: MiningParams,
     pub(crate) hash: H256,
@@ -100,7 +110,7 @@ pub struct PoolContex {
 }
 
 impl PoolContex {
-    pub(crate) fn new(
+    pub(crate) async fn new(
         p3d_params: P3dParams,
         node_addr: &str,
         pool_url: String,
@@ -142,23 +152,27 @@ impl PoolContex {
 
         let pre_hash: Option<&str> = response.get(0).expect("Expect pre_hash").as_str();
         let parent_hash: Option<&str> = response.get(1).expect("Expect parent_hash").as_str();
+        let win_difficulty: Option<&str> = response.get(2).expect("Expect pow_difficulty").as_str();
         let pow_difficulty: Option<&str> = response.get(3).expect("Expect pow_difficulty").as_str();
         let pub_key: Option<&str> = response.get(4).expect("public key").as_str();
 
         match (
             pre_hash,
             parent_hash,
+            win_difficulty,
             pow_difficulty,
             pub_key,
         ) {
             (
                 Some(pre_hash),
                 Some(parent_hash),
+                Some(win_difficulty),
                 Some(pow_difficulty),
                 Some(pub_key),
             ) => {
                 let pre_hash = H256::from_str(pre_hash).unwrap();
                 let parent_hash = H256::from_str(parent_hash).unwrap();
+                let win_difficulty = U256::from_str_radix(win_difficulty, 16).unwrap();
                 let pow_difficulty = U256::from_str_radix(pow_difficulty, 16).unwrap();
                 let pub_key = U256::from_str_radix(pub_key, 16).unwrap();
                 let mut pub_key = pub_key.encode();
@@ -169,6 +183,7 @@ impl PoolContex {
                 (*lock) = Some(MiningParams {
                     pre_hash,
                     parent_hash,
+                    win_difficulty,
                     pow_difficulty,
                     pub_key,
                 });
@@ -190,7 +205,7 @@ impl PoolContex {
             parent_hash: proposal.params.parent_hash,
             algo: self.p3d_params.algo.as_str().into(),
             dfclty: proposal.params.pow_difficulty,
-            hash: proposal.hash,
+            hash: proposal.hash.clone(),
             obj_id: proposal.obj_id,
             obj: proposal.obj,
         };
