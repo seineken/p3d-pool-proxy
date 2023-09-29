@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::rpc::{AlgoType, MiningObj, P3dParams, Payload, MiningProposal};
+use crate::rpc::{AlgoType, MiningObj, MiningProposal, P3dParams, Payload};
 use crate::worker::{Compute, DoubleHash};
-use codec::Encode;
+use codec::{Codec, Encode};
 use ecies_ed25519::encrypt;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::JsonValue;
@@ -27,6 +27,8 @@ pub fn get_hash_difficulty(hash: &H256) -> U256 {
     let max = U256::max_value();
     max / num_hash
 }
+
+type ParamsResp = (H256, H256, U256, U256, U256);
 
 #[rpc(server, client)]
 pub trait MiningRpc {
@@ -100,18 +102,36 @@ impl MiningRpcServer for MiningRpcServerImpl {
             .await
             .unwrap();
 
-        let mut content = String::new();
+        let mut content: Vec<String> = Vec::new();
 
         if let Some(params) = meta.as_array() {
             for param in params {
                 if let Some(param_str) = param.as_str() {
-                    println!("{}", param_str);
-                    content.push_str(param_str);
+                    // println!("{}", param_str);
+                    content.push(param_str.to_string());
                 }
             }
         }
 
-        Ok(format!("{}", content))
+        let pre_hash = H256::from_str(&content[0].clone()).unwrap();
+        let parent_hash = H256::from_str(&content[1].clone()).unwrap();
+        let win_difficulty = U256::from_str_radix(&content[2].clone(), 16).unwrap();
+        let pow_difficulty = U256::from_str_radix(&content[3].clone(), 16).unwrap();
+        let pub_key = U256::from_str_radix(&content[4].clone(), 16).unwrap();
+
+        Ok(format!(
+            "{}",
+            hex::encode(
+                (
+                    pre_hash,
+                    parent_hash,
+                    win_difficulty,
+                    pow_difficulty,
+                    pub_key,
+                )
+                    .encode()
+            )
+        ))
     }
     async fn push_to_pool(
         &self,
@@ -142,7 +162,6 @@ impl MiningRpcServer for MiningRpcServerImpl {
             obj: obj.as_bytes().to_vec(),
         };
 
-        // loop {
         let rot_hash = match &algo {
             AlgoType::Grid2dV3_1 => payload.pre_hash.clone(),
             _ => payload.parent_hash.clone(),
@@ -200,28 +219,27 @@ impl MiningRpcServer for MiningRpcServerImpl {
                 let mut pub_key = pub_key.encode();
                 pub_key.reverse();
                 let pub_key = ecies_ed25519::PublicKey::from_bytes(&pub_key).unwrap();
-        
+
                 let message = serde_json::to_string(&payload).unwrap();
                 let mut csprng = StdRng::from_seed(obj_hash.encode().try_into().unwrap());
                 let encrypted = encrypt(&pub_key, message.as_bytes(), &mut csprng).unwrap();
                 let sign = sign(self.key.clone(), &encrypted);
-        
+
                 let params = rpc_params![
                     serde_json::json!(encrypted.clone()),
                     serde_json::json!(self.member_id.clone()),
                     serde_json::json!(hex::encode(sign.to_bytes()))
                 ];
-        
+
                 let _response: JsonValue = self
                     .client
                     .request("poscan_pushMiningObjectToPool", params)
                     .await
                     .unwrap();
-        
-                println!("{}", _response);                
+
+                println!("{}", _response);
             }
         }
-        // }
 
         Ok(0)
     }
