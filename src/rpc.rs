@@ -55,7 +55,7 @@ impl AlgoType {
 }
 
 #[derive(Clone)]
-pub(crate) struct P3dParams {
+pub struct P3dParams {
     pub(crate) algo: AlgoType,
     pub(crate) grid: usize,
     pub(crate) sect: usize,

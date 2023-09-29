@@ -157,6 +157,7 @@ pub(crate) async fn run_rpc_server(ctx: Arc<PoolContex>) -> anyhow::Result<Socke
 
     module.merge(
         MiningRpcServerImpl::new(
+            ctx.p3d_params.clone(),
             ctx.pool_id.clone(),
             ctx.member_id.clone(),
             "Grid2dV3.1".into(),
