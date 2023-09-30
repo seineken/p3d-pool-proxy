@@ -19,7 +19,21 @@
                     "kind": "bin"
                 }
             },
-            "args": ["run","--key","3fcbf92346aa3be2d02b16ba7a9636c3bf943d4e766e8aaa0e5cd8baf0f96709"],
+            "args": [
+                "run",
+                "--algo",
+                "grid2d_v3.1",
+                "--url_pool",
+                "0.0.0.0:3333",
+                "--node_url",
+                "http://127.0.0.1:9933",
+                "--pool_id",
+                "d1CVfTXNxP73KXoBf7gbwNnBVF9hqtJJ1ZAxGEfgTdLboj8UV",
+                "--member_id",
+                "",
+                "--private_member_key",
+                ""
+            ],
             "cwd": "${workspaceFolder}"
         }
     ]

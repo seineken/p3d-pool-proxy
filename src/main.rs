@@ -22,28 +22,28 @@ enum SubCommand {
 struct RunOptions {
     /// 3d hash algorithm
     #[structopt(default_value = "grid2d_v3.1", short, long)]
-    /// Mining algorithm. Supported algorithms: grid2d, grid2d_v2, grid2d_v3
+    /// Mining algorithm. Supported algorithm: grid2d_v3.1
     algo: String,
 
-    #[structopt(default_value = "0.0.0.0:3334", short, long)]
-    /// Pool url
+    #[structopt(default_value = "0.0.0.0:3333", short, long)]
+    /// Pool proxy url
     pool_url: String,
 
-    #[structopt(default_value = "http://pool.3dpassmining.info:9933", short, long)]
+    #[structopt(default_value = "http://127.0.0.1:9933", short, long)]
     /// Node url
     node_url: String,
 
-    #[structopt(default_value = "d1G2JYmaLeoyDbqAQRD3bfdbNosjAC2bDM6Qkvtjx6iZ3u88Z", short, long)]
+    #[structopt(default_value = "d1CVfTXNxP73KXoBf7gbwNnBVF9hqtJJ1ZAxGEfgTdLboj8UV", short, long)]
     /// Pool id
     pool_id: String,
 
-    #[structopt(default_value = "d1Cz2nkxocd4JmHBtmvM2ysJbB1zGFuaurNimKgJ5rpNUA6Tv", short, long)]
-    /// Member id
+    #[structopt(short, long)]
+    /// Member id (wallet)
     member_id: String,
 
-    #[structopt(default_value = "", short, long)]
-    /// Member key to sign requests
-    key: String,
+    #[structopt(short, long)]
+    /// Member private key to sign requests
+    member_key: String,
 }
 
 #[derive(Debug, StructOpt)]
@@ -59,17 +59,8 @@ struct Cli {
     cmd: SubCommand,
 }
 
-fn init_logging() {
-    tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init()
-        .expect("setting default subscriber failed");
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_logging();
-
     let args = Cli::from_args();
 
     match args.cmd {
@@ -92,16 +83,12 @@ async fn main() -> anyhow::Result<()> {
                 opt.pool_url,
                 opt.pool_id,
                 opt.member_id,
-                opt.key,
+                opt.member_key,
             ).await?;
 
             let ctx = Arc::new(ctx);
-            tokio::spawn(worker::queue_management(ctx.clone()));
-
-            worker::start_timer(ctx.clone());
-
             let server_addr = worker::run_rpc_server(ctx.clone()).await?;
-            println!("Pool runing on :: http://{}", server_addr);
+            println!("Pool proxy runing on :: http://{}", server_addr);
 
             futures::future::pending().await
         }
