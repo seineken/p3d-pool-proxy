@@ -248,9 +248,9 @@ impl PoolContex {
         if _response == 0 {
             println!(
                 "{}",
-                Style::new().bold().paint(format!("✅ Share accepted"))
+                Style::new().bold().paint(format!("✅ Block found and proposed"))
             );
-            Ok("✅ Share accepted".into())
+            Ok("✅ Block found and proposed".into())
         } else {
             println!("{}", Style::new().bold().paint("⛔ Share Rejected"));
             return Err(Error::Custom("⛔ Share Rejected".into()));
