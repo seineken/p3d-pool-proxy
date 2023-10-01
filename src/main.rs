@@ -1,13 +1,15 @@
 use bip39::{Language, Mnemonic};
-use rpc::PoolContex;
+use handler::AppContex;
 use std::sync::Arc;
 use structopt::StructOpt;
 use substrate_bip39::mini_secret_from_entropy;
 
-use crate::rpc::P3dParams;
+use crate::{worker::P3dParams, solo_handler::SoloAppContex};
 
-mod rpc;
+mod handler;
+mod solo_handler;
 mod worker;
+mod solo_rpc;
 mod pool_rpc;
 
 #[derive(Debug, StructOpt)]
@@ -26,24 +28,28 @@ struct RunOptions {
     algo: String,
 
     #[structopt(default_value = "0.0.0.0:3333", short, long)]
-    /// Pool proxy url
-    pool_url: String,
+    /// Pool proxy address
+    proxy_address: String,
 
     #[structopt(default_value = "http://127.0.0.1:9933", short, long)]
     /// Node url
     node_url: String,
 
-    #[structopt(default_value = "d1CVfTXNxP73KXoBf7gbwNnBVF9hqtJJ1ZAxGEfgTdLboj8UV", short, long)]
+    #[structopt(default_value = "d1CVfTXNxP73KXoBf7gbwNnBVF9hqtJJ1ZAxGEfgTdLboj8UV", short, long, required_if("solo", "false"))]
     /// Pool id
     pool_id: String,
 
-    #[structopt(short, long)]
+    #[structopt(short, long, required_if("solo", "false"))]
     /// Member id (wallet)
     member_id: String,
 
-    #[structopt(short, long)]
+    #[structopt(short, long, required_if("solo", "false"))]
     /// Member private key to sign requests
     member_key: String,
+
+    #[structopt(short, long)]
+    /// Solo mining flag
+    solo: Option<bool>,
 }
 
 #[derive(Debug, StructOpt)]
@@ -77,18 +83,28 @@ async fn main() -> anyhow::Result<()> {
         }
         SubCommand::Run(opt) => {
             let p3d_params = P3dParams::new(opt.algo.as_str());
-            let ctx = PoolContex::new(
+            let pool_ctx = AppContex::new(
                 p3d_params,
                 opt.node_url.as_str(),
-                opt.pool_url,
+                opt.proxy_address.clone(),
                 opt.pool_id,
                 opt.member_id,
                 opt.member_key,
             ).await?;
 
-            let ctx = Arc::new(ctx);
-            let server_addr = worker::run_rpc_server(ctx.clone()).await?;
-            println!("Pool proxy runing on :: http://{}", server_addr);
+            if opt.solo.is_some() {
+                let solo_ctx = SoloAppContex::new(
+                    opt.node_url.as_str(),
+                    opt.proxy_address.clone(),                    
+                ).await?;
+                let solo_ctx = Arc::new(solo_ctx);
+                let server_addr = worker::solo_rpc_server(solo_ctx.clone()).await?;
+                println!("SOLO proxy runing on :: http://{}", server_addr);
+            } else {
+                let ctx = Arc::new(pool_ctx);
+                let server_addr = worker::pool_rpc_server(ctx.clone()).await?;
+                println!("POOL proxy runing on :: http://{}", server_addr);
+            }
 
             futures::future::pending().await
         }
