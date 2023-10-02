@@ -6,6 +6,8 @@ use jsonrpsee::rpc_params;
 
 use std::result::Result;
 
+use crate::utils::log;
+
 pub struct SoloAppContex {
     pub(crate) proxy_address: String,
 
@@ -56,5 +58,25 @@ impl SoloAppContex {
             return Err(Error::Custom("⛔ Block Rejected".into()));
         }
     }
+
+    pub(crate) async fn push_stats(
+        &self,
+        name: String,
+        cores: String,
+        tag: String,
+        hashrate: String,
+        good_hashrate: String,
+    ) -> Result<u64, Error> {
+        let message = format!(
+            "Device: {}\n Cores: {}\n Hashrate: {}{}\n Good: {}",
+            Style::new().bold().paint(format!("{}", name)),
+            Style::new().bold().paint(format!("{}", cores)),
+            Style::new().bold().paint(format!("{}", hashrate)),
+            Style::new().bold().paint(format!("{}", tag)),
+            Style::new().bold().paint(format!("{}", good_hashrate)),
+        );
+        log(message.clone());
+        Ok(0)
+    }    
 
 }

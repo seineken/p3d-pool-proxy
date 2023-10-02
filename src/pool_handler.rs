@@ -8,11 +8,16 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
 use primitive_types::{H256, U256};
 use rand::{rngs::StdRng, SeedableRng};
+use redis::Commands;
 use schnorrkel::{ExpansionMode, MiniSecretKey, SecretKey, Signature};
+use std::env;
 use std::result::Result;
 use std::str::FromStr;
 use std::sync::Mutex;
 
+extern crate redis;
+
+use crate::utils::{connect, log};
 use crate::worker::{MiningParams, P3dParams, Payload};
 
 pub struct AppContex {
@@ -209,15 +214,16 @@ impl AppContex {
         hashrate: String,
         good_hashrate: String,
     ) -> Result<u64, Error> {
-        let message = format!(
-            "Device: {}\n Cores: {}\n Hashrate: {}{}\n Good: {}",
-            Style::new().bold().paint(format!("{}", name)),
-            Style::new().bold().paint(format!("{}", cores)),
-            Style::new().bold().paint(format!("{}", hashrate)),
-            Style::new().bold().paint(format!("{}", tag)),
-            Style::new().bold().paint(format!("{}", good_hashrate)),
-        );
-        log(message.clone());
+        // let message = format!(
+        //     "Device: {}\n Cores: {}\n Hashrate: {}{}\n Good: {}",
+        //     Style::new().bold().paint(format!("{}", name)),
+        //     Style::new().bold().paint(format!("{}", cores)),
+        //     Style::new().bold().paint(format!("{}", hashrate)),
+        //     Style::new().bold().paint(format!("{}", tag)),
+        //     Style::new().bold().paint(format!("{}", good_hashrate)),
+        // );
+        // log(message.clone());
+        basics();
         Ok(0)
     }
 
@@ -231,12 +237,23 @@ impl AppContex {
     }
 }
 
-fn log(message: String) {
-    let timestamp = Local::now();
-    let formatted_timestamp = timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
-    println!(
-        "[{}]: {}",
-        formatted_timestamp,
-        Style::new().bold().paint(format!("{}", message))
-    );
+fn basics() {
+    let mut conn = connect();
+    let _: () = redis::cmd("SET")
+        .arg("foo")
+        .arg("bar")
+        .query(&mut conn)
+        .expect("failed to execute SET for 'foo'");
+    let bar: String = redis::cmd("GET")
+        .arg("foo")
+        .query(&mut conn)
+        .expect("failed to execute GET for 'foo'");
+    println!("value for 'foo' = {}", bar);
+    let _: () = conn
+        .incr("counter", 2)
+        .expect("failed to execute INCR for 'counter'");
+    let val: i32 = conn
+        .get("counter")
+        .expect("failed to execute GET for 'counter'");
+    println!("counter = {}", val);
 }

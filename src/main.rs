@@ -12,6 +12,7 @@ mod solo_handler;
 mod worker;
 mod solo_rpc;
 mod pool_rpc;
+mod utils;
 
 #[derive(Debug, StructOpt)]
 enum SubCommand {

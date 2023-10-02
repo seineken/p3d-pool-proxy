@@ -13,6 +13,16 @@ pub trait SoloMiningRpc {
     /// push_to_node handles the payload from the miner and push it to the node
     #[method(name = "push_to_node")]
     async fn push_to_node(&self, hash: String, obj: String) -> RpcResult<String>;
+
+    #[method(name = "push_stats")]
+    async fn push_stats(
+        &self,
+        name: String,
+        cores: String,
+        tag: String,
+        hashrate: String,
+        good_hashrate: String,
+    ) -> RpcResult<u64>;    
 }
 
 pub struct SoloMiningRpcServerImpl {
@@ -45,4 +55,20 @@ impl SoloMiningRpcServer for SoloMiningRpcServerImpl {
             .unwrap();
         Ok(response)
     }
+    async fn push_stats(
+        &self,
+        name: String,
+        cores: String,
+        tag: String,
+        hashrate: String,
+        good_hashrate: String,
+    ) -> RpcResult<u64> {
+        let response = self
+            .ctx
+            .push_stats(name, cores, tag, hashrate, good_hashrate)
+            .await
+            .map_err(|e| e.to_string())
+            .unwrap();
+        Ok(response)
+    }    
 }
