@@ -1,6 +1,6 @@
 [package]
 name = "p3d-pool-proxy"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Seineken"]
 
@@ -30,5 +30,6 @@ codec = { package = "parity-scale-codec", version = "3.1", default-features = fa
 
 tiny-bip39 = "1.0.0"
 substrate-bip39 = "0.4"
+chrono = "0.4.0"
 
 p3d = { version = "0.3.3", git = "https://github.com/3Dpass/p3d", tag = "v0.6.3" }
