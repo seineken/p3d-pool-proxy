@@ -9,137 +9,29 @@ use p3d::p3d_process;
 use primitive_types::{H256, U256};
 use rand::{rngs::StdRng, SeedableRng};
 use schnorrkel::{ExpansionMode, MiniSecretKey, SecretKey, Signature};
-use serde::Serialize;
-use sha3::{Digest, Sha3_256};
 use std::collections::HashSet;
 use std::result::Result;
 use std::str::FromStr;
 use std::sync::Mutex;
 
-#[derive(Encode)]
-pub struct DoubleHash {
-    pub pre_hash: H256,
-    pub obj_hash: H256,
-}
+use crate::worker::{P3dParams, MiningParams, Payload, AlgoType, MiningObj, DoubleHash, Compute};
 
-impl DoubleHash {
-    pub fn calc_hash(self) -> H256 {
-        H256::from_slice(Sha3_256::digest(&self.encode()[..]).as_slice())
-    }
-}
-
-#[derive(Clone, Encode)]
-pub struct Compute {
-    pub difficulty: U256,
-    pub pre_hash: H256,
-    pub poscan_hash: H256,
-}
-
-impl Compute {
-    pub(crate) fn get_work(&self) -> H256 {
-        let encoded_data = self.encode();
-        let hash_digest = Sha3_256::digest(&encoded_data);
-        H256::from_slice(&hash_digest)
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct MiningParams {
-    pub(crate) pre_hash: H256,
-    pub(crate) parent_hash: H256,
-    pub(crate) win_difficulty: U256,
-    pub(crate) pow_difficulty: U256,
-    pub(crate) pub_key: ecies_ed25519::PublicKey,
-}
-
-pub(crate) struct MiningObj {
-    pub(crate) obj: Vec<u8>,
-}
-
-#[derive(Clone, Encode)]
-pub(crate) enum AlgoType {
-    Grid2d,
-    Grid2dV2,
-    Grid2dV3,
-    Grid2dV3_1,
-}
-
-impl AlgoType {
-    pub(crate) fn as_p3d_algo(&self) -> p3d::AlgoType {
-        match self {
-            Self::Grid2d => p3d::AlgoType::Grid2d,
-            Self::Grid2dV2 => p3d::AlgoType::Grid2dV2,
-            Self::Grid2dV3 | Self::Grid2dV3_1 => p3d::AlgoType::Grid2dV3,
-        }
-    }
-
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            Self::Grid2d => "Grid2d",
-            Self::Grid2dV2 => "Grid2dV2",
-            Self::Grid2dV3 => "Grid2dV3",
-            Self::Grid2dV3_1 => "Grid2dV3.1",
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct P3dParams {
-    pub(crate) algo: AlgoType,
-    pub(crate) grid: usize,
-    pub(crate) sect: usize,
-}
-
-impl P3dParams {
-    pub(crate) fn new(ver: &str) -> Self {
-        let grid = 8;
-        let (algo, sect) = match ver {
-            "grid2d" => (AlgoType::Grid2d, 66),
-            "grid2d_v2" => (AlgoType::Grid2dV2, 12),
-            "grid2d_v3" => (AlgoType::Grid2dV3, 12),
-            "grid2d_v3.1" => (AlgoType::Grid2dV3_1, 12),
-            _ => panic!("Unknown algorithm: {}", ver),
-        };
-
-        Self { algo, grid, sect }
-    }
-}
-
-#[derive(Serialize)]
-pub(crate) struct Payload {
-    pub(crate) pool_id: String,
-    pub(crate) member_id: String,
-    pub(crate) pre_hash: H256,
-    pub(crate) parent_hash: H256,
-    pub(crate) algo: String,
-    pub(crate) dfclty: U256,
-    pub(crate) hash: H256,
-    pub(crate) obj_id: u64,
-    pub(crate) obj: Vec<u8>,
-}
-
-pub struct PoolContex {
+pub struct AppContex {
     pub(crate) p3d_params: P3dParams,
     pub(crate) pool_id: String,
     pub(crate) member_id: String,
     pub(crate) key: SecretKey,
-    pub(crate) pool_url: String,
+    pub(crate) proxy_address: String,
     pub(crate) cur_state: Mutex<Option<MiningParams>>,
 
     pub(crate) client: HttpClient,
 }
 
-fn get_hash_difficulty(hash: &H256) -> U256 {
-    let num_hash = U256::from(&hash[..]);
-    let max = U256::max_value();
-    max / num_hash
-}
-
-impl PoolContex {
+impl AppContex {
     pub(crate) async fn new(
         p3d_params: P3dParams,
         node_addr: &str,
-        pool_url: String,
+        proxy_address: String,
         pool_id: String,
         member_id: String,
         key: String,
@@ -150,25 +42,15 @@ impl PoolContex {
             .expect("Invalid key")
             .expand(ExpansionMode::Ed25519);
 
-        Ok(PoolContex {
+        Ok(AppContex {
             p3d_params,
             pool_id,
             member_id,
             key,
-            pool_url,
+            proxy_address,
             cur_state: Mutex::new(None),
             client: HttpClientBuilder::default().build(node_addr)?,
         })
-    }
-
-    pub(crate) async fn get_meta(&self) -> Result<String, Error> {
-        let meta = self
-            .client
-            .request::<String, _>("poscan_getMeta", rpc_params![])
-            .await
-            .map_err(|e| e.to_string())
-            .unwrap();
-        Ok(meta)
     }
 
     pub(crate) async fn get_mining_params(&self) -> Result<String, Error> {
@@ -234,33 +116,14 @@ impl PoolContex {
         ))
     }
 
-    pub(crate) async fn push_to_node(&self, hash: String, obj: String) -> Result<String, Error> {
-        let params = rpc_params![
-            serde_json::json!(serde_json::json!(hash)),
-            serde_json::json!(serde_json::json!(obj))
-        ];
-        let _response: JsonValue = self
-            .client
-            .request("poscan_pushMiningObject", params)
-            .await
-            .unwrap();
-
-        if _response == 0 {
-            println!(
-                "{}",
-                Style::new().bold().paint(format!("✅ Block found and proposed"))
-            );
-            Ok("✅ Block found and proposed".into())
-        } else {
-            println!("{}", Style::new().bold().paint("⛔ Share Rejected"));
-            return Err(Error::Custom("⛔ Share Rejected".into()));
-        }
-    }
-
     pub(crate) async fn push_to_pool(&self, hash: String, obj: String) -> Result<String, Error> {
+        // Clone the p3d_params into separate variables algo, sect, and grid
         let P3dParams { algo, sect, grid } = self.p3d_params.clone();
+    
+        // Create a HashSet to store processed hashes
         let mut processed_hashes: HashSet<H256> = HashSet::new();
-
+    
+        // Take ownership of the mining_params by cloning it from the locked cur_state
         let mining_params = {
             let params_lock = self.cur_state.lock().unwrap();
             if let Some(mp) = (*params_lock).clone() {
@@ -269,7 +132,8 @@ impl PoolContex {
                 return Err(Error::Custom("Mining params not available".into()));
             }
         };
-
+    
+        // Destructure the mining_params into separate variables
         let MiningParams {
             pre_hash,
             parent_hash,
@@ -277,13 +141,15 @@ impl PoolContex {
             pow_difficulty,
             pub_key,
         } = mining_params;
-
+    
+        // Create new variables win_dfclty and dfclty with values from win_difficulty and pow_difficulty
         let win_dfclty = win_difficulty;
         let dfclty = pow_difficulty;
-
-        // Hash from miner
+    
+        // Parse the input hash as H256
         let hash = H256::from_str(&hash).unwrap();
-
+    
+        // Create a Payload struct with various fields initialized using the cloned values
         let payload = Payload {
             pool_id: self.pool_id.clone(),
             member_id: self.member_id.clone(),
@@ -295,19 +161,24 @@ impl PoolContex {
             obj_id: 1,
             obj: obj.as_bytes().to_vec(),
         };
-
+    
+        // Start a loop
         loop {
+            // Determine the value of rot_hash based on algo
             let rot_hash = match &algo {
                 AlgoType::Grid2dV3_1 => pre_hash.clone(),
                 _ => parent_hash.clone(),
             };
-
+    
+            // Take the first 4 bytes of rot_hash and convert them to a fixed-size array or None
             let rot = rot_hash.encode()[0..4].try_into().ok();
-
+    
+            // Create a MiningObj struct with obj field initialized using the cloned payload.obj
             let mining_obj: MiningObj = MiningObj {
                 obj: payload.obj.clone(),
             };
-
+    
+            // Call the p3d_process function with relevant arguments to get res_hashes
             let res_hashes = p3d_process(
                 mining_obj.obj.as_slice(),
                 algo.as_p3d_algo(),
@@ -315,57 +186,80 @@ impl PoolContex {
                 sect as i16,
                 rot,
             );
-
+    
+            // Match the result of res_hashes
             let (_first_hash, obj_hash, poscan_hash) = match res_hashes {
                 Ok(hashes) if !hashes.is_empty() => {
+                    // Clone the first hash from hashes and parse it as H256
                     let first_hash = hashes[0].clone();
                     let obj_hash = H256::from_str(&first_hash).unwrap();
+    
+                    // Check if obj_hash is already processed; if so, continue looping
                     if processed_hashes.contains(&obj_hash) {
                         continue;
                     }
+    
+                    // Calculate the poscan_hash using DoubleHash structure
                     let poscan_hash = DoubleHash { pre_hash, obj_hash }.calc_hash();
+                    // Insert obj_hash into processed_hashes set
                     processed_hashes.insert(obj_hash.clone());
+    
+                    // Return the first_hash, obj_hash, and poscan_hash as a tuple
                     (first_hash, obj_hash, poscan_hash)
                 }
                 _ => {
+                    // If res_hashes is an Err or empty, continue looping
                     continue;
                 }
             };
-
+    
+            // Iterate over difficulty values [dfclty, win_dfclty]
             for difficulty in [dfclty, win_dfclty] {
+                // Create a Compute struct with relevant fields
                 let comp = Compute {
                     difficulty,
                     pre_hash,
                     poscan_hash,
                 };
-
+    
+                // Calculate the hash difficulty using the get_work method of comp
                 let diff = get_hash_difficulty(&comp.get_work());
-
+    
                 if diff >= difficulty {
+                    // Convert the payload to JSON string
                     let message = serde_json::to_string(&payload).unwrap();
+    
+                    // Create a cryptographically secure PRNG from obj_hash
                     let mut csprng = StdRng::from_seed(obj_hash.encode().try_into().unwrap());
+                    
+                    // Encrypt the message using the public key and csprng
                     let encrypted = encrypt(&pub_key, message.as_bytes(), &mut csprng).unwrap();
+                    // Sign the encrypted message using the sign method
                     let sign = self.sign(&encrypted);
-
+    
+                    // Create RPC parameters using encrypted, self.member_id, and sign
                     let params = rpc_params![
                         serde_json::json!(encrypted.clone()),
                         serde_json::json!(self.member_id.clone()),
                         serde_json::json!(hex::encode(sign.to_bytes()))
                     ];
-
+    
+                    // Print the hash and difficulty information
                     println!(
                         "💎 Hash > Pool Difficulty: {} > {} (win: {})",
                         Style::new().bold().paint(format!("{:.2}", &diff)),
                         &dfclty,
                         &win_dfclty,
                     );
-
+    
+                    // Make the RPC request to poscan_pushMiningObjectToPool method
                     let _response: JsonValue = self
                         .client
                         .request("poscan_pushMiningObjectToPool", params)
                         .await
                         .unwrap();
-
+    
+                    // Check the response value and print appropriate messages
                     if _response == 0 {
                         println!(
                             "{}",
@@ -375,15 +269,34 @@ impl PoolContex {
                         println!("{}", Style::new().bold().paint("⛔ Share Rejected"));
                     }
                 }
+                // Break the loop after processing one difficulty value
                 break;
             }
+            // Break the outer loop after processing one set of res_hashes
             break;
         }
+    
+        // Return an Ok result with a string indicating "Proposed to Pool"
         Ok("Proposed to Pool".into())
     }
 
     fn sign(&self, msg: &[u8]) -> Signature {
+        // Define a constant CTX as a byte array with the value "Mining pool"
         const CTX: &[u8] = b"Mining pool";
+    
+        // Call the `sign_simple` method on the `self.key` object (a private key)
+        // Pass in the CTX, the message (msg), and the public key derived from the private key
         self.key.sign_simple(CTX, msg, &self.key.to_public())
     }
+}
+
+fn get_hash_difficulty(hash: &H256) -> U256 {
+    // Convert the hash to a U256 number
+    let num_hash = U256::from(&hash[..]);
+    
+    // Get the maximum value of U256
+    let max = U256::max_value();
+    
+    // Calculate the difficulty by dividing the max value by the num_hash
+    max / num_hash
 }
