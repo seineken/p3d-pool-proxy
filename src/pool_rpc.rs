@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::handler::AppContex;
+use crate::pool_handler::AppContex;
 use jsonrpsee::core::{async_trait, RpcResult};
 use jsonrpsee::proc_macros::rpc;
 

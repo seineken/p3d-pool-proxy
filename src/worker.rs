@@ -8,7 +8,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::{pool_rpc::{PoolMiningRpcServer, PoolMiningRpcServerImpl}, solo_rpc::{SoloMiningRpcServer, SoloMiningRpcServerImpl}, solo_handler::SoloAppContex};
+use crate::{
+    pool_rpc::{PoolMiningRpcServer, PoolMiningRpcServerImpl},
+    solo_handler::SoloAppContex,
+    solo_rpc::{SoloMiningRpcServer, SoloMiningRpcServerImpl},
+};
 
 use super::AppContex;
 
@@ -121,7 +125,7 @@ pub(crate) async fn pool_rpc_server(ctx: Arc<AppContex>) -> anyhow::Result<Socke
         .allow_headers([hyper::header::CONTENT_TYPE]);
     let middleware = tower::ServiceBuilder::new().layer(cors);
 
-    let socker_url: SocketAddr = ctx.pool_url.clone().parse::<SocketAddr>()?;
+    let socker_url: SocketAddr = ctx.proxy_address.clone().parse::<SocketAddr>()?;
     let server = Server::builder()
         .set_middleware(middleware)
         .build(socker_url)

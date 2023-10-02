@@ -7,6 +7,32 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Cargo launch",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--lib"
+                ]
+            },
+            "args": [
+                "run",
+                "-al",
+                "grid2d_v3.1",
+                "-a",
+                "0.0.0.0:3333",
+                "-n",
+                "http://127.0.0.1:9933",
+                "-p",
+                "d1CVfTXNxP73KXoBf7gbwNnBVF9hqtJJ1ZAxGEfgTdLboj8UV",
+                "-m",
+                "d1H1tqHSoRQFumLVxg28akPHHXcks6FWTZcpKDUB8iDfmNL8J",
+                "-k",
+                ""
+            ]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug executable 'p3d-pool'",
             "cargo": {
                 "args": [
@@ -21,18 +47,18 @@
             },
             "args": [
                 "run",
-                "--algo",
+                "-al",
                 "grid2d_v3.1",
-                "--url_pool",
+                "-a",
                 "0.0.0.0:3333",
-                "--node_url",
+                "-n",
                 "http://127.0.0.1:9933",
-                "--pool_id",
+                "-p",
                 "d1CVfTXNxP73KXoBf7gbwNnBVF9hqtJJ1ZAxGEfgTdLboj8UV",
-                "--member_id",
-                "",
-                "--private_member_key",
-                ""
+                "-m",
+                "d1H1tqHSoRQFumLVxg28akPHHXcks6FWTZcpKDUB8iDfmNL8J",
+                "-k",
+                "3fcbf92346aa3be2d02b16ba7a9636c3bf943d4e766e8aaa0e5cd8baf0f96709"
             ],
             "cwd": "${workspaceFolder}"
         }

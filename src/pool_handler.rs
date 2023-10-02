@@ -21,7 +21,7 @@ pub struct AppContex {
     pub(crate) pool_id: String,
     pub(crate) member_id: String,
     pub(crate) key: SecretKey,
-    pub(crate) pool_url: String,
+    pub(crate) proxy_address: String,
     pub(crate) cur_state: Mutex<Option<MiningParams>>,
 
     pub(crate) client: HttpClient,
@@ -31,7 +31,7 @@ impl AppContex {
     pub(crate) async fn new(
         p3d_params: P3dParams,
         node_addr: &str,
-        pool_url: String,
+        proxy_address: String,
         pool_id: String,
         member_id: String,
         key: String,
@@ -47,7 +47,7 @@ impl AppContex {
             pool_id,
             member_id,
             key,
-            pool_url,
+            proxy_address,
             cur_state: Mutex::new(None),
             client: HttpClientBuilder::default().build(node_addr)?,
         })
