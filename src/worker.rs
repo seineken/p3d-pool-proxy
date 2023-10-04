@@ -3,7 +3,6 @@ use hyper::Method;
 use jsonrpsee::server::{RpcModule, Server};
 use primitive_types::{H256, U256};
 use serde::Serialize;
-use sha3::{Digest, Sha3_256};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -16,33 +15,6 @@ use crate::{
 
 use super::AppContex;
 
-#[derive(Encode)]
-pub struct DoubleHash {
-    pub pre_hash: H256,
-    pub obj_hash: H256,
-}
-
-impl DoubleHash {
-    pub fn calc_hash(self) -> H256 {
-        H256::from_slice(Sha3_256::digest(&self.encode()[..]).as_slice())
-    }
-}
-
-#[derive(Clone, Encode)]
-pub struct Compute {
-    pub difficulty: U256,
-    pub pre_hash: H256,
-    pub poscan_hash: H256,
-}
-
-impl Compute {
-    pub(crate) fn get_work(&self) -> H256 {
-        let encoded_data = self.encode();
-        let hash_digest = Sha3_256::digest(&encoded_data);
-        H256::from_slice(&hash_digest)
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct MiningParams {
     pub(crate) pre_hash: H256,
@@ -50,10 +22,6 @@ pub(crate) struct MiningParams {
     pub(crate) win_difficulty: U256,
     pub(crate) pow_difficulty: U256,
     pub(crate) pub_key: ecies_ed25519::PublicKey,
-}
-
-pub(crate) struct MiningObj {
-    pub(crate) obj: Vec<u8>,
 }
 
 #[derive(Clone, Encode)]
@@ -65,14 +33,6 @@ pub(crate) enum AlgoType {
 }
 
 impl AlgoType {
-    pub(crate) fn as_p3d_algo(&self) -> p3d::AlgoType {
-        match self {
-            Self::Grid2d => p3d::AlgoType::Grid2d,
-            Self::Grid2dV2 => p3d::AlgoType::Grid2dV2,
-            Self::Grid2dV3 | Self::Grid2dV3_1 => p3d::AlgoType::Grid2dV3,
-        }
-    }
-
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::Grid2d => "Grid2d",
@@ -86,14 +46,11 @@ impl AlgoType {
 #[derive(Clone)]
 pub struct P3dParams {
     pub(crate) algo: AlgoType,
-    pub(crate) grid: usize,
-    pub(crate) sect: usize,
 }
 
 impl P3dParams {
     pub(crate) fn new(ver: &str) -> Self {
-        let grid = 8;
-        let (algo, sect) = match ver {
+        let (algo, _sect) = match ver {
             "grid2d" => (AlgoType::Grid2d, 66),
             "grid2d_v2" => (AlgoType::Grid2dV2, 12),
             "grid2d_v3" => (AlgoType::Grid2dV3, 12),
@@ -101,7 +58,7 @@ impl P3dParams {
             _ => panic!("Unknown algorithm: {}", ver),
         };
 
-        Self { algo, grid, sect }
+        Self { algo }
     }
 }
 
