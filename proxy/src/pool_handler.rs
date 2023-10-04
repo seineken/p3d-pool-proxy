@@ -1,5 +1,4 @@
 use ansi_term::Style;
-use chrono::Local;
 use codec::Encode;
 use ecies_ed25519::encrypt;
 use jsonrpsee::core::client::ClientT;
@@ -10,13 +9,13 @@ use primitive_types::{H256, U256};
 use rand::{rngs::StdRng, SeedableRng};
 use redis::Commands;
 use schnorrkel::{ExpansionMode, MiniSecretKey, SecretKey, Signature};
-use std::env;
 use std::result::Result;
 use std::str::FromStr;
 use std::sync::Mutex;
 
 extern crate redis;
 
+use crate::message::{Message, StatsPayload};
 use crate::utils::{connect, log};
 use crate::worker::{MiningParams, P3dParams, Payload};
 
@@ -213,18 +212,21 @@ impl AppContex {
         tag: String,
         hashrate: String,
         good_hashrate: String,
-    ) -> Result<u64, Error> {
-        // let message = format!(
-        //     "Device: {}\n Cores: {}\n Hashrate: {}{}\n Good: {}",
-        //     Style::new().bold().paint(format!("{}", name)),
-        //     Style::new().bold().paint(format!("{}", cores)),
-        //     Style::new().bold().paint(format!("{}", hashrate)),
-        //     Style::new().bold().paint(format!("{}", tag)),
-        //     Style::new().bold().paint(format!("{}", good_hashrate)),
-        // );
-        // log(message.clone());
-        basics();
-        Ok(0)
+    ) -> Result<String, Error> {
+        let payload = StatsPayload {
+            name,
+            cores,
+            tag,
+            hashrate,
+            good_hashrate,
+        };
+
+        let message = Message::new(self.member_id.clone(), payload);
+        let response = self
+            .publish_message(message)
+            .map_err(|e| e.to_string())
+            .unwrap();
+        Ok(response)
     }
 
     fn sign(&self, msg: &[u8]) -> Signature {
@@ -235,25 +237,18 @@ impl AppContex {
         // Pass in the CTX, the message (msg), and the public key derived from the private key
         self.key.sign_simple(CTX, msg, &self.key.to_public())
     }
-}
 
-fn basics() {
-    let mut conn = connect();
-    let _: () = redis::cmd("SET")
-        .arg("foo")
-        .arg("bar")
-        .query(&mut conn)
-        .expect("failed to execute SET for 'foo'");
-    let bar: String = redis::cmd("GET")
-        .arg("foo")
-        .query(&mut conn)
-        .expect("failed to execute GET for 'foo'");
-    println!("value for 'foo' = {}", bar);
-    let _: () = conn
-        .incr("counter", 2)
-        .expect("failed to execute INCR for 'counter'");
-    let val: i32 = conn
-        .get("counter")
-        .expect("failed to execute GET for 'counter'");
-    println!("counter = {}", val);
+    fn publish_message(&self, message: Message) -> Result<String, Error> {
+        let mut con = connect();
+        let payload = serde_json::to_string(&message)?;
+        let result: u64 = con
+            .publish(message.channel, payload)
+            .map_err(|e| e)
+            .unwrap();
+
+        // let result: String = con.set(message.channel, payload).map_err(|e| e).unwrap();
+
+        let response = format!("{:?}", result);
+        Ok(response)
+    }
 }

@@ -1,0 +1,65 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "SOLO",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=p3d-pool-proxy",
+                    "--package=p3d-pool-proxy"
+                ],
+                "filter": {
+                    "name": "p3d-pool-proxy",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "run",
+                "-o",
+                "solo",
+                "-a",
+                "0.0.0.0:3334"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "POOL",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=p3d-pool-proxy",
+                    "--package=p3d-pool-proxy"
+                ],
+                "filter": {
+                    "name": "p3d-pool-proxy",
+                    "kind": "bin"
+                }
+            },
+            "env": {
+                "REDIS_HOSTNAME": "127.0.0.1:6379"
+            },
+            "args": [
+                "run",
+                "-o",
+                "pool",
+                "-a",
+                "0.0.0.0:3334",
+                "-m",
+                "d1H1tqHSoRQFumLVxg28akPHHXcks6FWTZcpKDUB8iDfmNL8J",
+                "-p",
+                "d1CVfTXNxP73KXoBf7gbwNnBVF9hqtJJ1ZAxGEfgTdLboj8UV",
+                "-k",
+                "3fcbf92346aa3be2d02b16ba7a9636c3bf943d4e766e8aaa0e5cd8baf0f96709"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

@@ -12,7 +12,9 @@ mod solo_handler;
 mod worker;
 mod solo_rpc;
 mod pool_rpc;
+mod stats_rpc;
 mod utils;
+mod message;
 
 #[derive(Debug, StructOpt)]
 enum SubCommand {
@@ -25,7 +27,7 @@ enum SubCommand {
 #[derive(Debug, StructOpt)]
 struct RunOptions {
     /// 3d hash algorithm
-    #[structopt(default_value = "grid2d_v3.1", short = "al", long = "algo")]
+    #[structopt(default_value = "grid2d_v3.1", short = "l", long = "algo")]
     /// Mining algorithm. Supported algorithm: grid2d_v3.1
     algo: String,
 
@@ -84,6 +86,8 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         SubCommand::Run(opt) => {
+            worker::run_stats_server().await?;
+            
             if let Some(proxy_mode) = opt.proxy_mode {
                 if proxy_mode == "solo" {
                     let solo_ctx = SoloAppContex::new(

@@ -1,0 +1,5 @@
+version: "3.9"
+
+services:
+  proxy:
+    command: ./target/release/p3d-pool-proxy run -o solo -a 0.0.0.0:3333 -n http://YOUR_NODE_ADDRESS:9933

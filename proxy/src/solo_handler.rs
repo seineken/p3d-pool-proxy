@@ -3,10 +3,11 @@ use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::{Error, JsonValue};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
-
+use redis::Commands;
 use std::result::Result;
 
-use crate::utils::log;
+use crate::message::{StatsPayload, Message};
+use crate::utils::{log, connect};
 
 pub struct SoloAppContex {
     pub(crate) proxy_address: String,
@@ -48,14 +49,16 @@ impl SoloAppContex {
             .unwrap();
 
         if _response == 0 {
-            println!(
+            let message = format!(
                 "{}",
                 Style::new().bold().paint(format!("✅ Block found and proposed to the chain"))
             );
-            Ok("✅ Block found and proposed to the chain".into())
+            log(message.clone());
+            Ok(message)
         } else {
-            println!("{}", Style::new().bold().paint("⛔ Block Rejected"));
-            return Err(Error::Custom("⛔ Block Rejected".into()));
+            let message = format!("{}", Style::new().bold().paint("⛔ Block Rejected"));
+            log(message.clone());
+            return Err(Error::Custom(message));
         }
     }
 
@@ -66,17 +69,31 @@ impl SoloAppContex {
         tag: String,
         hashrate: String,
         good_hashrate: String,
-    ) -> Result<u64, Error> {
-        let message = format!(
-            "Device: {}\n Cores: {}\n Hashrate: {}{}\n Good: {}",
-            Style::new().bold().paint(format!("{}", name)),
-            Style::new().bold().paint(format!("{}", cores)),
-            Style::new().bold().paint(format!("{}", hashrate)),
-            Style::new().bold().paint(format!("{}", tag)),
-            Style::new().bold().paint(format!("{}", good_hashrate)),
-        );
-        log(message.clone());
-        Ok(0)
+    ) -> Result<String, Error> {
+        let payload = StatsPayload {
+            name,
+            cores,
+            tag,
+            hashrate,
+            good_hashrate,
+        };
+
+        let message = Message::new(String::from("123456"), payload);
+        let response = self
+            .publish_message(message)
+            .map_err(|e| e.to_string())
+            .unwrap();
+        Ok(response)
     }    
 
+    fn publish_message(&self, message: Message) -> Result<String, Error> {
+        let mut con = connect();
+        let payload = serde_json::to_string(&message)?;
+        let result: u64 = con
+            .publish(message.channel, payload)
+            .map_err(|e| e)
+            .unwrap();
+        let response = format!("{:?}", result);
+        Ok(response)
+    }
 }

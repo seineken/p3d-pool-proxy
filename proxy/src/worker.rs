@@ -10,7 +10,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::{
     pool_rpc::{PoolMiningRpcServer, PoolMiningRpcServerImpl},
     solo_handler::SoloAppContex,
-    solo_rpc::{SoloMiningRpcServer, SoloMiningRpcServerImpl},
+    solo_rpc::{SoloMiningRpcServer, SoloMiningRpcServerImpl}, stats_rpc::StatsRpcServerImpl,
 };
 
 use super::AppContex;
@@ -123,4 +123,29 @@ pub(crate) async fn solo_rpc_server(ctx: Arc<SoloAppContex>) -> anyhow::Result<S
     tokio::spawn(handle.stopped());
 
     Ok(addr)
+}
+
+pub(crate) async fn run_stats_server() -> anyhow::Result<SocketAddr> {
+    let cors = CorsLayer::new()
+        .allow_methods([Method::POST])
+        .allow_origin(Any)
+        .allow_headers([hyper::header::CONTENT_TYPE]);
+    let middleware = tower::ServiceBuilder::new().layer(cors);
+
+    let socker_url: SocketAddr = String::from("0.0.0.0:3533").parse::<SocketAddr>()?;
+    let server = Server::builder()
+        .set_middleware(middleware)
+        .build(socker_url)
+        .await?;
+
+    let mut module = RpcModule::new(());
+
+    module.merge(StatsRpcServerImpl::new().into_rpc())?;
+
+	let addr = server.local_addr()?;
+	let handle = server.start(module);
+
+	tokio::spawn(handle.stopped());
+
+	Ok(addr)
 }

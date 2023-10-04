@@ -22,7 +22,7 @@ pub trait SoloMiningRpc {
         tag: String,
         hashrate: String,
         good_hashrate: String,
-    ) -> RpcResult<u64>;    
+    ) -> RpcResult<String>;    
 }
 
 pub struct SoloMiningRpcServerImpl {
@@ -62,7 +62,7 @@ impl SoloMiningRpcServer for SoloMiningRpcServerImpl {
         tag: String,
         hashrate: String,
         good_hashrate: String,
-    ) -> RpcResult<u64> {
+    ) -> RpcResult<String> {
         let response = self
             .ctx
             .push_stats(name, cores, tag, hashrate, good_hashrate)

@@ -1,0 +1,5 @@
+version: "3.9"
+
+services:
+  proxy:
+    command: ./target/release/p3d-pool-proxy run -o pool -a 0.0.0.0:3333 -p POOL_ID -m MEMBER_ID -k PRIVATE_KEY
