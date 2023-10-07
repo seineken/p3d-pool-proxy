@@ -51,7 +51,7 @@
                 "-o",
                 "pool",
                 "-a",
-                "0.0.0.0:3334",
+                "0.0.0.0:3333",
                 "-m",
                 "d1H1tqHSoRQFumLVxg28akPHHXcks6FWTZcpKDUB8iDfmNL8J",
                 "-p",

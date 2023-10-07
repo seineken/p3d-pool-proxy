@@ -1,3 +1,4 @@
+use codec::Encode;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
@@ -26,7 +27,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Encode)]
 pub struct StatsPayload {
     pub name: String,
     pub cores: String,

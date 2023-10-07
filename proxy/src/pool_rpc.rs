@@ -22,7 +22,7 @@ pub trait PoolMiningRpc {
         tag: String,
         hashrate: String,
         good_hashrate: String,
-    ) -> RpcResult<String>;    
+    ) -> RpcResult<String>;
 }
 
 pub struct PoolMiningRpcServerImpl {

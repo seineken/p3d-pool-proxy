@@ -21,14 +21,15 @@ services:
       - TERM=linux
     ports:
       - 3333:3333
+      - 3533:3533
     links:
       - cache
     depends_on:
       - cache
     networks:
       - p3d
-  webapp:
-    container_name: "webapp"
+  ui:
+    container_name: "ui"
     build:
       context: .
       dockerfile: docker/ui.Dockerfile
