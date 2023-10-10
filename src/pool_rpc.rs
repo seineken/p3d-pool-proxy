@@ -13,6 +13,16 @@ pub trait PoolMiningRpc {
     /// push_to_pool handles the payload from the miner and push it to the POOL
     #[method(name = "push_to_pool")]
     async fn push_to_pool(&self, hash: String, obj: String) -> RpcResult<String>;
+
+    #[method(name = "push_stats")]
+    async fn push_stats(
+        &self,
+        name: String,
+        cores: String,
+        tag: String,
+        hashrate: String,
+        good_hashrate: String,
+    ) -> RpcResult<String>;
 }
 
 pub struct PoolMiningRpcServerImpl {
@@ -45,4 +55,20 @@ impl PoolMiningRpcServer for PoolMiningRpcServerImpl {
             .unwrap();
         Ok(response)
     }
+    async fn push_stats(
+        &self,
+        name: String,
+        cores: String,
+        tag: String,
+        hashrate: String,
+        good_hashrate: String,
+    ) -> RpcResult<String> {
+        let response = self
+            .ctx
+            .push_stats(name, cores, tag, hashrate, good_hashrate)
+            .await
+            .map_err(|e| e.to_string())
+            .unwrap();
+        Ok(response)
+    }    
 }

@@ -1,17 +1,21 @@
-use ansi_term::Style;
+use ansi_term::{Colour, Style};
 use bip39::{Language, Mnemonic};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use pool_handler::AppContex;
-use std::{sync::Arc, process::Command, time::Duration, thread::sleep};
+use std::{net::SocketAddr, process::Command, sync::Arc, thread::sleep, time::Duration};
 use structopt::StructOpt;
 use substrate_bip39::mini_secret_from_entropy;
 
-use crate::{worker::P3dParams, solo_handler::SoloAppContex};
+use crate::{solo_handler::SoloAppContex, worker::P3dParams};
 
+mod message;
 mod pool_handler;
-mod solo_handler;
-mod worker;
-mod solo_rpc;
 mod pool_rpc;
+mod solo_handler;
+mod solo_rpc;
+mod stats_rpc;
+mod utils;
+mod worker;
 
 #[derive(Debug, StructOpt)]
 enum SubCommand {
@@ -24,7 +28,7 @@ enum SubCommand {
 #[derive(Debug, StructOpt)]
 struct RunOptions {
     /// 3d hash algorithm
-    #[structopt(default_value = "grid2d_v3.1", short = "al", long = "algo")]
+    #[structopt(default_value = "grid2d_v3.1", short = "l", long = "algo")]
     /// Mining algorithm. Supported algorithm: grid2d_v3.1
     algo: String,
 
@@ -32,7 +36,11 @@ struct RunOptions {
     /// Pool proxy address
     proxy_address: String,
 
-    #[structopt(default_value = "http://seineken.ddns.net:9933", short = "n", long = "node-url")]
+    #[structopt(
+        default_value = "http://seineken.ddns.net:9933",
+        short = "n",
+        long = "node-url"
+    )]
     /// Node url
     node_url: String,
 
@@ -83,45 +91,61 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         SubCommand::Run(opt) => {
+            clear_console();
+
+            let stats_server_address =
+                worker::run_stats_server(String::from("0.0.0.0:3533")).await?;
+            let _stats_ws_address = format!("http://{}", stats_server_address);
+
             if let Some(proxy_mode) = opt.proxy_mode {
                 if proxy_mode == "solo" {
-                    let solo_ctx = SoloAppContex::new(
-                        opt.node_url.as_str(),
-                        opt.proxy_address.clone(),                    
-                    ).await?;
+                    let solo_ctx =
+                        SoloAppContex::new(opt.node_url.as_str(), opt.proxy_address.clone())
+                            .await?;
                     let solo_ctx = Arc::new(solo_ctx);
                     let server_addr = worker::solo_rpc_server(solo_ctx.clone()).await?;
 
-                    clear_console();
-                    
-                    println!("{}", Style::new().bold().paint(format!("************************************************************************************")));
-                    println!("{}", Style::new().bold().paint(format!("🌐 SOLO proxy runing on :: http://{}", server_addr)));
-                    println!("{}", Style::new().bold().paint(format!("************************************************************************************")));
+                    println!("{}",format!(
+                        "{}",
+                        Style::new()
+                            .bold()
+                            .paint(format!("{} :: running on http://{}", String::from("🌐 Pool Proxy :: SOLO :: "), server_addr))
+                    ));
                 } else {
-                    let p3d_params = P3dParams::new(opt.algo.as_str());
+                    let p3d_params = P3dParams::new(opt.algo.as_str());                              
+
                     let pool_ctx = AppContex::new(
                         p3d_params,
                         opt.node_url.as_str(),
                         opt.proxy_address.clone(),
-                        opt.pool_id.unwrap(),
-                        opt.member_id.unwrap(),
-                        opt.member_key.unwrap(),
-                    ).await?;
+                        opt.pool_id.clone().unwrap(),
+                        opt.member_id.clone().unwrap(),
+                        opt.member_key.clone().unwrap(),
+                    )
+                    .await?;
                     let ctx = Arc::new(pool_ctx);
-                    let server_addr = worker::pool_rpc_server(ctx.clone()).await?;
+                    let _server_addr = worker::pool_rpc_server(ctx.clone()).await?;
 
-                    clear_console();
+                    println!("{}",format!(
+                        "{}",
+                        Style::new()
+                            .bold()
+                            .paint(format!("{} :: running on http://{}", String::from("🌐 Pool Proxy :: POOL :: "), _server_addr))
+                    ));
 
-                    println!("{}", Style::new().bold().paint(format!("************************************************************************************")));
-                    println!("{}", Style::new().bold().paint(format!("🌐  POOL proxy runing on :: http://{}", server_addr)));
-                    println!("{}", Style::new().bold().paint(format!("************************************************************************************")));
-                    println!("{}", Style::new().bold().paint(format!("🆔  Pool Id       :: {}", ctx.pool_id.clone())));
-                    println!("{}", Style::new().bold().paint(format!("🪪   Member Id     :: {}", ctx.member_id.clone())));
-                    println!("{}", Style::new().bold().paint(format!("************************************************************************************")));
+                    println!("{}",format!("🪪  Member Id      :: {}", opt.member_id.clone().unwrap()));
+                    
+                    println!("{}",format!("🆔  Pool Id        :: {}", opt.pool_id.clone().unwrap()
+                    ));
                 }
             } else {
                 if opt.pool_id.is_none() || opt.member_id.is_none() || opt.member_key.is_none() {
-                    println!("{}", Style::new().bold().paint(format!("🚨 POOL mode requires pool-id, member-id and member-key.")));
+                    println!(
+                        "{}",
+                        Style::new().bold().paint(format!(
+                            "🚨 POOL mode requires pool-id, member-id and member-key."
+                        ))
+                    );
                     std::process::exit(1);
                 }
             }
@@ -134,16 +158,10 @@ async fn main() -> anyhow::Result<()> {
 fn clear_console() {
     if cfg!(target_os = "windows") {
         // Comando para limpiar la consola en Windows
-        let _ = Command::new("cmd")
-            .arg("/c")
-            .arg("cls")
-            .status();
+        let _ = Command::new("cmd").arg("/c").arg("cls").status();
     } else {
         // Comando para limpiar la consola en sistemas Unix
-        let _ = Command::new("sh")
-            .arg("-c")
-            .arg("clear")
-            .status();
+        let _ = Command::new("sh").arg("-c").arg("clear").status();
     }
 
     // Espera breve para dar tiempo a que se vea la pantalla limpia
