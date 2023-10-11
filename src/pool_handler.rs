@@ -365,6 +365,23 @@ impl AppContex {
                             (*lock_mp) = Some(diff.clone());
                             thread::sleep(Duration::from_millis(10));
                         }
+
+                        let mut accepted_shares = {
+                            let params_lock = self.accepted_shares.lock().unwrap();
+                            if let Some(ls) = (*params_lock).clone() {
+                                ls
+                            } else {
+                                drop(params_lock);
+                                thread::sleep(Duration::from_millis(10));
+                                0
+                            }
+                        };      
+
+                        accepted_shares += 1;                  
+
+                        let mut lock_as = self.accepted_shares.lock().unwrap();
+                        (*lock_as) = Some(accepted_shares);
+                        thread::sleep(Duration::from_millis(10));
                     } else {
                         let message = format!("{}", Style::new().bold().paint("⛔ Share Rejected"));
                         log(format!("{:?}", _response));
@@ -474,6 +491,17 @@ impl AppContex {
                 }
             };
 
+            let accepted_shares = {
+                let params_lock = self.accepted_shares.lock().unwrap();
+                if let Some(ls) = (*params_lock).clone() {
+                    ls
+                } else {
+                    drop(params_lock);
+                    thread::sleep(Duration::from_millis(10));
+                    0
+                }
+            };            
+
             let mining_params = {
                 let params_lock = self.cur_state.lock().unwrap();
                 if let Some(mp) = (*params_lock).clone() {
@@ -487,23 +515,25 @@ impl AppContex {
 
             let MiningParams { pow_difficulty, .. } = mining_params;
 
-            if last_share_diff > pow_difficulty {
-                let mut lock_mp = self.dynamic_mp.lock().unwrap();
-                (*lock_mp) = Some(DynamicMiningParams {
-                    dynamic_difficulty: last_share_diff,
-                    no_shares_round: false,
-                });
-                log(format!("🦾 Difficulty set to {}", last_share_diff));
+            if accepted_shares > 0 {
+                if last_share_diff > pow_difficulty {
+                    let mut lock_mp = self.dynamic_mp.lock().unwrap();
+                    (*lock_mp) = Some(DynamicMiningParams {
+                        dynamic_difficulty: last_share_diff,
+                        no_shares_round: false,
+                    });
+                    log(format!("🦾 New difficulty set to {}", last_share_diff));
+                }
+                log(format!("🦾 Difficulty remains {}", pow_difficulty));
             } else {
                 let mut lock_mp = self.dynamic_mp.lock().unwrap();
                 (*lock_mp) = Some(DynamicMiningParams {
-                    dynamic_difficulty: pow_difficulty,
+                    dynamic_difficulty: last_share_diff,
                     no_shares_round: true,
                 });
                 log(format!(
                     "⏱️ No shares found for the last round, restarting difficulty"
                 ));
-                log(format!("🦾 Difficulty set to {}", pow_difficulty));
             }
         }
     }
