@@ -93,6 +93,19 @@ async fn main() -> anyhow::Result<()> {
         SubCommand::Run(opt) => {
             clear_console();
 
+            const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+            println!(
+                "{}",
+                format!(
+                    "{}",
+                    Style::new()
+                        .bold()
+                        .fg(Colour::Green)
+                        .paint(format!("📱 P3D Pool Proxy v{}\n", String::from(VERSION)))
+                )
+            );
+
             let stats_server_address =
                 worker::run_stats_server(String::from("0.0.0.0:3533")).await?;
             let _stats_ws_address = format!("http://{}", stats_server_address);
@@ -105,14 +118,21 @@ async fn main() -> anyhow::Result<()> {
                     let solo_ctx = Arc::new(solo_ctx);
                     let server_addr = worker::solo_rpc_server(solo_ctx.clone()).await?;
 
-                    println!("{}",format!(
+                    println!(
                         "{}",
-                        Style::new()
-                            .bold()
-                            .paint(format!("{} :: running on http://{}", String::from("🌐 Pool Proxy :: SOLO :: "), server_addr))
-                    ));
+                        format!(
+                            "{}",
+                            Style::new()
+                                .bold()
+                                .paint(format!("💻 Running        :: http://{}", server_addr))
+                        )
+                    );
+                    println!(
+                        "{}",
+                        format!("🌀  Mode           :: {}\n", String::from("SOLO"))
+                    );
                 } else {
-                    let p3d_params = P3dParams::new(opt.algo.as_str());                              
+                    let p3d_params = P3dParams::new(opt.algo.as_str());
 
                     let pool_ctx = AppContex::new(
                         p3d_params,
@@ -123,20 +143,28 @@ async fn main() -> anyhow::Result<()> {
                         opt.member_key.clone().unwrap(),
                     )
                     .await?;
+
                     let ctx = Arc::new(pool_ctx);
                     let _server_addr = worker::pool_rpc_server(ctx.clone()).await?;
 
-                    println!("{}",format!(
+                    println!(
                         "{}",
-                        Style::new()
-                            .bold()
-                            .paint(format!("{} :: running on http://{}", String::from("🌐 Pool Proxy :: POOL :: "), _server_addr))
-                    ));
+                        format!("💻  Running        :: http://{}", _server_addr)
+                    );
+                    println!(
+                        "{}",
+                        format!("🌀  Mode           :: {}", String::from("POOL"))
+                    );
+                    println!(
+                        "{}",
+                        format!("🆔  Pool Id        :: {}", opt.pool_id.clone().unwrap())
+                    );
+                    println!(
+                        "{}",
+                        format!("🪪  Member Id      :: {}\n", opt.member_id.clone().unwrap())
+                    );
 
-                    println!("{}",format!("🪪  Member Id      :: {}", opt.member_id.clone().unwrap()));
-                    
-                    println!("{}",format!("🆔  Pool Id        :: {}", opt.pool_id.clone().unwrap()
-                    ));
+                    std::thread::spawn(move || ctx.adjust_difficulty());
                 }
             } else {
                 if opt.pool_id.is_none() || opt.member_id.is_none() || opt.member_key.is_none() {
