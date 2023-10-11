@@ -516,15 +516,20 @@ impl AppContex {
             let MiningParams { pow_difficulty, .. } = mining_params;
 
             if accepted_shares > 0 {
-                if last_share_diff > pow_difficulty {
+                if last_share_diff > pow_difficulty && accepted_shares >= 5 {
                     let mut lock_mp = self.dynamic_mp.lock().unwrap();
                     (*lock_mp) = Some(DynamicMiningParams {
                         dynamic_difficulty: last_share_diff,
                         no_shares_round: false,
-                    });
+                    });                 
                     log(format!("🦾 New difficulty set to {}", last_share_diff));
+                } else {
+                    log(format!("🦾 Difficulty remains {}", pow_difficulty));
                 }
-                log(format!("🦾 Difficulty remains {}", pow_difficulty));
+
+                let mut lock_as = self.accepted_shares.lock().unwrap();
+                (*lock_as) = Some(0);
+                thread::sleep(Duration::from_millis(10));                   
             } else {
                 let mut lock_mp = self.dynamic_mp.lock().unwrap();
                 (*lock_mp) = Some(DynamicMiningParams {
