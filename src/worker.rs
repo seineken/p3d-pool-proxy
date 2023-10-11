@@ -19,7 +19,7 @@ use crate::{
 
 use super::AppContex;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct MiningParams {
     pub(crate) pre_hash: H256,
     pub(crate) parent_hash: H256,
@@ -31,6 +31,7 @@ pub(crate) struct MiningParams {
 #[derive(Clone)]
 pub(crate) struct DynamicMiningParams {
     pub(crate) dynamic_difficulty: U256,
+    pub(crate) no_shares_round: bool,
 }
 
 #[derive(Clone, Encode)]

@@ -12,6 +12,7 @@ use redis::{Commands, Value};
 use schnorrkel::{ExpansionMode, MiniSecretKey, SecretKey, Signature};
 use sha3::{Digest, Sha3_256};
 use std::collections::HashSet;
+use std::num::ParseIntError;
 // use tokio_stream::StreamExt;
 use std::result::Result;
 use std::str::FromStr;
@@ -57,6 +58,9 @@ pub struct AppContex {
     pub(crate) cur_state: Mutex<Option<MiningParams>>,
     pub(crate) dynamic_mp: Mutex<Option<DynamicMiningParams>>,
     pub(crate) processed_hashes: Mutex<Option<HashSet<H256>>>,
+    pub(crate) last_share_diff: Mutex<Option<U256>>,
+    pub(crate) accepted_shares: Mutex<Option<u64>>,
+    pub(crate) rejected_shares: Mutex<Option<u64>>,
 
     pub(crate) client: HttpClient,
 }
@@ -85,6 +89,9 @@ impl AppContex {
             cur_state: Mutex::new(None),
             dynamic_mp: Mutex::new(None),
             processed_hashes: Mutex::new(Some(HashSet::new())),
+            last_share_diff: Mutex::new(None),
+            accepted_shares: Mutex::new(Some(0)),
+            rejected_shares: Mutex::new(Some(0)),
             client: HttpClientBuilder::default().build(node_addr)?,
         })
     }
@@ -124,33 +131,48 @@ impl AppContex {
                 }
             };
 
+        let original_pow_difficulty = pow_difficulty.clone();
+
         let mut pub_key_extra = pub_key.clone().encode();
         pub_key_extra.reverse();
         let pub_key_extra = ecies_ed25519::PublicKey::from_bytes(&pub_key_extra).unwrap();
 
-        // let dynamic_diff: DynamicMiningParams = {
-        //     let dyn_param = self.dynamic_mp.lock().unwrap();
-        //     if let Some(dp) = (*dyn_param).clone() {
-        //         dp
-        //     } else {
-        //         drop(dyn_param);
-        //         DynamicMiningParams {
-        //             dynamic_difficulty: U256::zero(),
-        //         }
-        //     }
-        // };
+        let dynamic_diff: DynamicMiningParams = {
+            let dyn_param = self.dynamic_mp.lock().unwrap();
+            if let Some(dp) = (*dyn_param).clone() {
+                dp
+            } else {
+                drop(dyn_param);
+                DynamicMiningParams {
+                    dynamic_difficulty: U256::zero(),
+                    no_shares_round: false,
+                }
+            }
+        };
 
-        // let DynamicMiningParams { dynamic_difficulty } = dynamic_diff;
+        let DynamicMiningParams {
+            dynamic_difficulty,
+            no_shares_round,
+        } = dynamic_diff;
 
-        // if dynamic_difficulty > pow_difficulty {
-        //     pow_difficulty = dynamic_difficulty;
+        if !no_shares_round {
+            if dynamic_difficulty > pow_difficulty {
+                pow_difficulty = dynamic_difficulty;
 
-        //     // If the dynamic difficulty is higher than network's difficulty
-        //     // then the difficulty for the miner is the network's difficulty
-        //     if pow_difficulty >= win_difficulty {
-        //         pow_difficulty = win_difficulty;
-        //     }
-        // }
+                // If the dynamic difficulty is higher than network's difficulty
+                // then the difficulty for the miner is the network's difficulty
+                if pow_difficulty >= win_difficulty {
+                    pow_difficulty = win_difficulty;
+                }
+            }
+        } else {
+            pow_difficulty = original_pow_difficulty;
+            let mut lock_mp = self.dynamic_mp.lock().unwrap();
+            (*lock_mp) = Some(DynamicMiningParams {
+                dynamic_difficulty: pow_difficulty,
+                no_shares_round: false,
+            });            
+        }
 
         let mut lock = self.cur_state.lock().unwrap();
         (*lock) = Some(MiningParams {
@@ -178,12 +200,7 @@ impl AppContex {
 
     pub(crate) async fn push_to_pool(&self, _hash: String, obj: String) -> Result<String, Error> {
         let P3dParams { algo, sect, grid } = self.p3d_params.clone();
-        // let mut processed_hashes: HashSet<H256> = HashSet::new();
-
         let hash = H256::from_str(&_hash).unwrap();
-
-        // let start_time = Instant::now();
-        // let max_duration = Duration::from_secs(30);
 
         loop {
             let mining_params = {
@@ -241,7 +258,10 @@ impl AppContex {
                     };
 
                     if processed_hashes.contains(&obj_hash) {
-                        log(format!("🚩 Duplicated hash discarded {:x}", obj_hash.clone()));
+                        log(format!(
+                            "🚩 Duplicated hash discarded {:x}",
+                            obj_hash.clone()
+                        ));
                         break;
                     }
 
@@ -321,19 +341,69 @@ impl AppContex {
                             Style::new().bold().paint(format!("✅ Share accepted"))
                         );
 
-                        // self.shares_pb.set_message(&message);
                         log(message);
 
-                        let mut lock_mp = self.dynamic_mp.lock().unwrap();
-                        (*lock_mp) = Some(DynamicMiningParams {
-                            dynamic_difficulty: diff.clone(),
-                        });
-                        thread::sleep(Duration::from_millis(10));
+                        let last_share_diff = {
+                            let params_lock = self.last_share_diff.lock().unwrap();
+                            if let Some(ls) = (*params_lock).clone() {
+                                ls
+                            } else {
+                                drop(params_lock);
+                                thread::sleep(Duration::from_millis(10));
+                                U256::zero()
+                            }
+                        };
+
+                        if last_share_diff == U256::zero() {
+                            let mut lock_mp = self.last_share_diff.lock().unwrap();
+                            (*lock_mp) = Some(diff.clone());
+                            thread::sleep(Duration::from_millis(10));
+                        }
+
+                        if last_share_diff > difficulty {
+                            let mut lock_mp = self.last_share_diff.lock().unwrap();
+                            (*lock_mp) = Some(diff.clone());
+                            thread::sleep(Duration::from_millis(10));
+                        }
                     } else {
                         let message = format!("{}", Style::new().bold().paint("⛔ Share Rejected"));
                         log(format!("{:?}", _response));
                         log(message);
-                        // self.shares_pb.set_message(&message);
+
+                        let mut rejected_shares = {
+                            let params_lock = self.rejected_shares.lock().unwrap();
+                            if let Some(ls) = (*params_lock).clone() {
+                                ls
+                            } else {
+                                drop(params_lock);
+                                thread::sleep(Duration::from_millis(10));
+                                0
+                            }
+                        };
+
+                        rejected_shares += 1;
+
+                        if rejected_shares > 20 {
+                            let MiningParams { pow_difficulty, .. } = mining_params;
+
+                            if diff > pow_difficulty {
+                                let mut lock_mp = self.dynamic_mp.lock().unwrap();
+                                (*lock_mp) = Some(DynamicMiningParams {
+                                    dynamic_difficulty: diff.clone(),
+                                    no_shares_round: false,
+                                });
+                                log(format!("🦾 Difficulty set to {}", diff.clone()));
+                            }
+
+                            let mut lock_mp = self.rejected_shares.lock().unwrap();
+                            (*lock_mp) = Some(0);
+                            thread::sleep(Duration::from_millis(10));
+                        } else {
+                            let mut lock_mp = self.rejected_shares.lock().unwrap();
+                            (*lock_mp) = Some(rejected_shares);
+                            thread::sleep(Duration::from_millis(10));
+                        }
+
                     }
                 }
                 break;
@@ -356,8 +426,10 @@ impl AppContex {
             cores,
             tag,
             hashrate,
-            good_hashrate,
+            good_hashrate: good_hashrate.clone(),
         };
+
+        // self.adjust_difficulty(good_hashrate.clone());
 
         // let message = Message::new(self.member_id.clone(), payload);
         // let response = self
@@ -383,5 +455,56 @@ impl AppContex {
         let result: String = con.set(message.channel, payload).map_err(|e| e).unwrap();
         let response = format!("{}", result);
         Ok(response)
+    }
+
+    pub fn adjust_difficulty(&self) {
+        log(String::from("💯 Difficulty background task started"));
+
+        loop {
+            thread::sleep(Duration::from_secs(600));
+
+            let last_share_diff = {
+                let params_lock = self.last_share_diff.lock().unwrap();
+                if let Some(ls) = (*params_lock).clone() {
+                    ls
+                } else {
+                    drop(params_lock);
+                    thread::sleep(Duration::from_millis(10));
+                    U256::zero()
+                }
+            };
+
+            let mining_params = {
+                let params_lock = self.cur_state.lock().unwrap();
+                if let Some(mp) = (*params_lock).clone() {
+                    mp
+                } else {
+                    drop(params_lock);
+                    thread::sleep(Duration::from_millis(10));
+                    MiningParams::default()
+                }
+            };
+
+            let MiningParams { pow_difficulty, .. } = mining_params;
+
+            if last_share_diff > pow_difficulty {
+                let mut lock_mp = self.dynamic_mp.lock().unwrap();
+                (*lock_mp) = Some(DynamicMiningParams {
+                    dynamic_difficulty: last_share_diff,
+                    no_shares_round: false,
+                });
+                log(format!("🦾 Difficulty set to {}", last_share_diff));
+            } else {
+                let mut lock_mp = self.dynamic_mp.lock().unwrap();
+                (*lock_mp) = Some(DynamicMiningParams {
+                    dynamic_difficulty: pow_difficulty,
+                    no_shares_round: true,
+                });
+                log(format!(
+                    "⏱️ No shares found for the last round, restarting difficulty"
+                ));
+                log(format!("🦾 Difficulty set to {}", pow_difficulty));
+            }
+        }
     }
 }
