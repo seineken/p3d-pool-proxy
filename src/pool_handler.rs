@@ -171,7 +171,7 @@ impl AppContex {
             (*lock_mp) = Some(DynamicMiningParams {
                 dynamic_difficulty: pow_difficulty,
                 no_shares_round: false,
-            });            
+            });
         }
 
         let mut lock = self.cur_state.lock().unwrap();
@@ -360,7 +360,7 @@ impl AppContex {
                             thread::sleep(Duration::from_millis(10));
                         }
 
-                        if last_share_diff > difficulty {
+                        if diff > last_share_diff {
                             let mut lock_mp = self.last_share_diff.lock().unwrap();
                             (*lock_mp) = Some(diff.clone());
                             thread::sleep(Duration::from_millis(10));
@@ -375,9 +375,9 @@ impl AppContex {
                                 thread::sleep(Duration::from_millis(10));
                                 0
                             }
-                        };      
+                        };
 
-                        accepted_shares += 1;                  
+                        accepted_shares += 1;
 
                         let mut lock_as = self.accepted_shares.lock().unwrap();
                         (*lock_as) = Some(accepted_shares);
@@ -420,7 +420,6 @@ impl AppContex {
                             (*lock_mp) = Some(rejected_shares);
                             thread::sleep(Duration::from_millis(10));
                         }
-
                     }
                 }
                 break;
@@ -500,7 +499,7 @@ impl AppContex {
                     thread::sleep(Duration::from_millis(10));
                     0
                 }
-            };            
+            };
 
             let mining_params = {
                 let params_lock = self.cur_state.lock().unwrap();
@@ -516,12 +515,12 @@ impl AppContex {
             let MiningParams { pow_difficulty, .. } = mining_params;
 
             if accepted_shares > 0 {
-                if last_share_diff > pow_difficulty && accepted_shares >= 5 {
+                if accepted_shares >= 5 {
                     let mut lock_mp = self.dynamic_mp.lock().unwrap();
                     (*lock_mp) = Some(DynamicMiningParams {
                         dynamic_difficulty: last_share_diff,
                         no_shares_round: false,
-                    });                 
+                    });
                     log(format!("🦾 New difficulty set to {}", last_share_diff));
                 } else {
                     log(format!("🦾 Difficulty remains {}", pow_difficulty));
@@ -529,7 +528,7 @@ impl AppContex {
 
                 let mut lock_as = self.accepted_shares.lock().unwrap();
                 (*lock_as) = Some(0);
-                thread::sleep(Duration::from_millis(10));                   
+                thread::sleep(Duration::from_millis(10));
             } else {
                 let mut lock_mp = self.dynamic_mp.lock().unwrap();
                 (*lock_mp) = Some(DynamicMiningParams {
