@@ -50,11 +50,10 @@ pub const CLAMP_FACTOR: u128 = 2;
 pub const DIFFICULTY_DAMP_FACTOR: u128 = 3;
 /// Minimum difficulty, enforced in diff retargetting
 /// avoids getting stuck when trying to increase difficulty subject to dampening
-pub const MIN_DIFFICULTY: u128 = DIFFICULTY_DAMP_FACTOR;
+const INITIAL_DIFFICULTY: u64 = 2000000;
+pub const MIN_DIFFICULTY: u128 = INITIAL_DIFFICULTY as u128;
 /// Maximum difficulty.
 pub const MAX_DIFFICULTY: u128 = u128::max_value();
-
-const INITIAL_DIFFICULTY: u64 = 2000000;
 
 #[derive(Clone)]
 pub struct DifficultyAndTimestamp {
@@ -428,12 +427,9 @@ impl AppContex {
         wallet: String,
         rig_name: String,
     ) -> anyhow::Result<()> {
-        log(String::from("💯 Difficulty adjustment started"));
+        log(String::from("💯 Adjusting difficulty"));
         let db_name = "pool-p3d";
         let coll_name = "shares";
-
-        // thread::sleep(Duration::from_secs(60));
-        // let coll_difficulties = "difficulties";
 
         let mut shares = self
             .get_miner_shares(db_name, coll_name, wallet.clone(), rig_name.clone())
@@ -504,6 +500,13 @@ impl AppContex {
                 no_shares_round: false,
             });
             log(format!("🦾 New adjusted difficulty set to {}", difficulty));
+        } else {
+            let mut lock_mp = self.dynamic_mp.lock().unwrap();
+            (*lock_mp) = Some(DynamicMiningParams {
+                dynamic_difficulty: U256::from(INITIAL_DIFFICULTY),
+                no_shares_round: false,
+            });
+            log(format!("🦾 Difficulty set to {}", INITIAL_DIFFICULTY));
         }
 
         Ok(())
