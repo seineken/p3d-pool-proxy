@@ -121,11 +121,11 @@ async fn main() -> anyhow::Result<()> {
 
             let stats_server_address =
                 worker::run_stats_server(String::from("0.0.0.0:3533")).await?;
-            let _stats_ws_address = format!("http://{}", stats_server_address);
+            let _stats_ws_address = format!("{}", stats_server_address);
 
             println!(
                 "{}",
-                format!("💻  Stats server running on        :: http://{}", _stats_ws_address)
+                format!("💻  Stats server   :: http://{}", _stats_ws_address)
             );
             // std::thread::spawn(move || ctx.adjust_difficulty());
 

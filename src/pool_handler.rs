@@ -6,7 +6,6 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
 use p3d::p3d_process;
 use primitive_types::{H256, U256};
-use schnorrkel::{ExpansionMode, MiniSecretKey, SecretKey, Signature};
 use sha3::{Digest, Sha3_256};
 use std::collections::HashSet;
 use std::result::Result;
@@ -21,7 +20,7 @@ extern crate redis;
 use crate::message::{Message, StatsPayload};
 use crate::utils::log;
 use crate::worker::{
-    AlgoType, DoubleHash, DynamicMiningParams, MiningObj, MiningParams, P3dParams, Payload,
+    AlgoType, DoubleHash, DynamicMiningParams, MiningObj, MiningParams, P3dParams,
 };
 use mongodb::{options::ClientOptions, Client as ClientMongo, Cursor};
 use mongodb::bson::{DateTime, doc};
@@ -186,7 +185,7 @@ impl AppContex {
 
         let DynamicMiningParams {
             dynamic_difficulty,
-            no_shares_round,
+            ..
         } = dynamic_diff;
 
         if dynamic_difficulty > pow_difficulty {
@@ -225,7 +224,7 @@ impl AppContex {
 
     pub(crate) async fn push_to_pool(&self, _hash: String, obj: String, wallet: String, rig_name: String) -> Result<String, Error> {
         let P3dParams { algo, sect, grid } = self.p3d_params.clone();
-        let hash = H256::from_str(&_hash).unwrap();
+        let _hash = H256::from_str(&_hash).unwrap();
 
         loop {
             let mining_params = {
@@ -244,7 +243,7 @@ impl AppContex {
                 parent_hash,
                 win_difficulty,
                 pow_difficulty,
-                pub_key,
+                ..
             } = mining_params;
             let rot_hash = match &algo {
                 AlgoType::Grid2dV3_1 => pre_hash,
@@ -395,7 +394,7 @@ impl AppContex {
         Ok(String::from("WIP"))
     }
 
-    fn store_stats(&self, message: Message) -> Result<String, Error> {
+    fn store_stats(&self, _message: Message) -> Result<String, Error> {
         Ok(String::from("store_stats"))
     }
 
