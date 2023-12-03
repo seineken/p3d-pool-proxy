@@ -1,18 +1,15 @@
 use ansi_term::{Colour, Style};
 use bip39::{Language, Mnemonic};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use pool_handler::AppContex;
-use std::{net::SocketAddr, process::Command, sync::Arc, thread::sleep, time::Duration};
+use std::{env, process::Command, sync::Arc, thread::sleep, time::Duration};
 use structopt::StructOpt;
 use substrate_bip39::mini_secret_from_entropy;
 
-use crate::{solo_handler::SoloAppContex, worker::P3dParams};
+use crate::worker::P3dParams;
 
 mod message;
 mod pool_handler;
 mod pool_rpc;
-mod solo_handler;
-mod solo_rpc;
 mod stats_rpc;
 mod utils;
 mod worker;
@@ -32,14 +29,14 @@ struct RunOptions {
     /// Mining algorithm. Supported algorithm: grid2d_v3.1
     algo: String,
 
-    #[structopt(default_value = "127.0.0.1:3333", short = "a", long = "proxy-address")]
+    #[structopt(default_value = "0.0.0.0:3336", short = "a", long = "proxy-address")]
     /// Pool proxy address
     proxy_address: String,
 
     #[structopt(
-        default_value = "http://seineken.ddns.net:9933",
-        short = "n",
-        long = "node-url"
+    default_value = "http://127.0.0.1:9933",
+    short = "n",
+    long = "node-url"
     )]
     /// Node url
     node_url: String,
@@ -47,18 +44,6 @@ struct RunOptions {
     #[structopt(short = "p", long = "pool-id", required_if("proxy-mode", "pool"))]
     /// Pool id
     pool_id: Option<String>,
-
-    #[structopt(short = "m", long = "member-id", required_if("proxy-mode", "pool"))]
-    /// Member id (wallet)
-    member_id: Option<String>,
-
-    #[structopt(short = "k", long = "member-key", required_if("proxy-mode", "pool"))]
-    /// Member private key to sign requests
-    member_key: Option<String>,
-
-    #[structopt(short = "o", long = "mode")]
-    /// Proxy mode (solo or pool)
-    proxy_mode: Option<String>,
 }
 
 #[derive(Debug, StructOpt)]
@@ -106,77 +91,43 @@ async fn main() -> anyhow::Result<()> {
                 )
             );
 
+            let p3d_params = P3dParams::new(opt.algo.as_str());
+            let mongo_url = env::var("MONGO_URL").expect("MONGO_URL must be set");
+
+            let pool_ctx = AppContex::new(
+                p3d_params,
+                opt.node_url.as_str(),
+                opt.proxy_address.clone(),
+                opt.pool_id.clone().unwrap(),
+                mongo_url.as_str(),
+            )
+                .await?;
+
+            let ctx = Arc::new(pool_ctx);
+            let _server_addr = worker::pool_rpc_server(ctx.clone()).await?;
+
+            println!(
+                "{}",
+                format!("💻  Running        :: http://{}", _server_addr)
+            );
+            println!(
+                "{}",
+                format!("🌀  Mode           :: {}", String::from("POOL"))
+            );
+            println!(
+                "{}",
+                format!("🆔  Pool Id        :: {}", opt.pool_id.clone().unwrap())
+            );
+
             let stats_server_address =
                 worker::run_stats_server(String::from("0.0.0.0:3533")).await?;
             let _stats_ws_address = format!("http://{}", stats_server_address);
 
-            if let Some(proxy_mode) = opt.proxy_mode {
-                if proxy_mode == "solo" {
-                    let solo_ctx =
-                        SoloAppContex::new(opt.node_url.as_str(), opt.proxy_address.clone())
-                            .await?;
-                    let solo_ctx = Arc::new(solo_ctx);
-                    let server_addr = worker::solo_rpc_server(solo_ctx.clone()).await?;
-
-                    println!(
-                        "{}",
-                        format!(
-                            "{}",
-                            Style::new()
-                                .bold()
-                                .paint(format!("💻 Running        :: http://{}", server_addr))
-                        )
-                    );
-                    println!(
-                        "{}",
-                        format!("🌀  Mode           :: {}\n", String::from("SOLO"))
-                    );
-                } else {
-                    let p3d_params = P3dParams::new(opt.algo.as_str());
-
-                    let pool_ctx = AppContex::new(
-                        p3d_params,
-                        opt.node_url.as_str(),
-                        opt.proxy_address.clone(),
-                        opt.pool_id.clone().unwrap(),
-                        opt.member_id.clone().unwrap(),
-                        opt.member_key.clone().unwrap(),
-                    )
-                    .await?;
-
-                    let ctx = Arc::new(pool_ctx);
-                    let _server_addr = worker::pool_rpc_server(ctx.clone()).await?;
-
-                    println!(
-                        "{}",
-                        format!("💻  Running        :: http://{}", _server_addr)
-                    );
-                    println!(
-                        "{}",
-                        format!("🌀  Mode           :: {}", String::from("POOL"))
-                    );
-                    println!(
-                        "{}",
-                        format!("🆔  Pool Id        :: {}", opt.pool_id.clone().unwrap())
-                    );
-                    println!(
-                        "{}",
-                        format!("🪪  Member Id      :: {}\n", opt.member_id.clone().unwrap())
-                    );
-
-                    std::thread::spawn(move || ctx.adjust_difficulty());
-                }
-            } else {
-                if opt.pool_id.is_none() || opt.member_id.is_none() || opt.member_key.is_none() {
-                    println!(
-                        "{}",
-                        Style::new().bold().paint(format!(
-                            "🚨 POOL mode requires pool-id, member-id and member-key."
-                        ))
-                    );
-                    std::process::exit(1);
-                }
-            }
+            println!(
+                "{}",
+                format!("💻  Stats server running on        :: http://{}", _stats_ws_address)
+            );
+            // std::thread::spawn(move || ctx.adjust_difficulty());
 
             futures::future::pending().await
         }

@@ -1,32 +1,67 @@
-use ansi_term::Style;
+use std::cmp::{max, min};
 use codec::Encode;
-use ecies_ed25519::encrypt;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::{Error, JsonValue};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
 use p3d::p3d_process;
 use primitive_types::{H256, U256};
-use rand::{rngs::StdRng, SeedableRng};
-use redis::{Commands, Value};
 use schnorrkel::{ExpansionMode, MiniSecretKey, SecretKey, Signature};
 use sha3::{Digest, Sha3_256};
 use std::collections::HashSet;
-use std::num::ParseIntError;
-// use tokio_stream::StreamExt;
 use std::result::Result;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use ansi_term::Style;
 
 extern crate redis;
 
 use crate::message::{Message, StatsPayload};
-use crate::utils::{connect, log};
+use crate::utils::log;
 use crate::worker::{
     AlgoType, DoubleHash, DynamicMiningParams, MiningObj, MiningParams, P3dParams, Payload,
 };
+use mongodb::{options::ClientOptions, Client as ClientMongo, Cursor};
+use mongodb::bson::{DateTime, doc};
+use mongodb::options::FindOptions;
+use serde::{Deserialize, Serialize};
+
+pub const BLOCK_TIME_SEC: u64 = 60;
+/// Block time interval in milliseconds.
+pub const BLOCK_TIME: u64 = BLOCK_TIME_SEC * 1000;
+// pub const BLOCK_TIME_WINDOW: u64 = BLOCK_TIME_SEC * 1000;
+pub const TARGET_BLOCK_TIME: u64 = BLOCK_TIME_SEC * 1000;
+
+pub const HOUR_HEIGHT: u64 = 3600 / BLOCK_TIME_SEC;
+// /// A day is 1440 blocks
+// pub const DAY_HEIGHT: u64 = 24 * HOUR_HEIGHT;
+// /// A week is 10_080 blocks
+// pub const WEEK_HEIGHT: u64 = 7 * DAY_HEIGHT;
+// /// A year is 524_160 blocks
+// pub const YEAR_HEIGHT: u64 = 52 * WEEK_HEIGHT;
+
+/// Number of blocks used to calculate difficulty adjustments
+pub const DIFFICULTY_ADJUST_WINDOW: u64 = HOUR_HEIGHT;
+/// Clamp factor to use for difficulty adjustment
+/// Limit value to within this factor of goal
+pub const CLAMP_FACTOR: u128 = 2;
+/// Dampening factor to use for difficulty adjustment
+pub const DIFFICULTY_DAMP_FACTOR: u128 = 3;
+/// Minimum difficulty, enforced in diff retargetting
+/// avoids getting stuck when trying to increase difficulty subject to dampening
+pub const MIN_DIFFICULTY: u128 = DIFFICULTY_DAMP_FACTOR;
+/// Maximum difficulty.
+pub const MAX_DIFFICULTY: u128 = u128::max_value();
+
+const INITIAL_DIFFICULTY: u64 = 2000000;
+
+#[derive(Clone)]
+pub struct DifficultyAndTimestamp {
+    pub difficulty: U256,
+    pub timestamp: i64,
+}
 
 #[derive(Clone, Encode)]
 pub struct Compute {
@@ -49,19 +84,25 @@ pub fn get_hash_difficulty(hash: &H256) -> U256 {
     max / num_hash
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Share {
+    pub miner_wallet: String,
+    pub rig_name: String,
+    pub timestamp: DateTime,
+    pub difficulty: U256,
+    pub accounted: bool,
+    pub paid: bool,
+}
+
 pub struct AppContex {
     pub(crate) p3d_params: P3dParams,
     pub(crate) pool_id: String,
-    pub(crate) member_id: String,
-    pub(crate) key: SecretKey,
     pub(crate) proxy_address: String,
     pub(crate) cur_state: Mutex<Option<MiningParams>>,
     pub(crate) dynamic_mp: Mutex<Option<DynamicMiningParams>>,
     pub(crate) processed_hashes: Mutex<Option<HashSet<H256>>>,
-    pub(crate) last_share_diff: Mutex<Option<U256>>,
-    pub(crate) accepted_shares: Mutex<Option<u64>>,
-    pub(crate) rejected_shares: Mutex<Option<u64>>,
 
+    pub(crate) mongo: ClientMongo,
     pub(crate) client: HttpClient,
 }
 
@@ -71,27 +112,21 @@ impl AppContex {
         node_addr: &str,
         proxy_address: String,
         pool_id: String,
-        member_id: String,
-        key: String,
+        mongo_addr: &str,
     ) -> anyhow::Result<Self> {
-        let key = key.replacen("0x", "", 1);
-        let key_data = hex::decode(&key[..])?;
-        let key = MiniSecretKey::from_bytes(&key_data[..])
-            .expect("Invalid key")
-            .expand(ExpansionMode::Ed25519);
+
+        let client_options = ClientOptions::parse(mongo_addr)
+            .await
+            .expect("Failed to load mongoDB.");
 
         Ok(AppContex {
             p3d_params,
             pool_id,
-            member_id,
-            key,
             proxy_address,
             cur_state: Mutex::new(None),
             dynamic_mp: Mutex::new(None),
             processed_hashes: Mutex::new(Some(HashSet::new())),
-            last_share_diff: Mutex::new(None),
-            accepted_shares: Mutex::new(Some(0)),
-            rejected_shares: Mutex::new(Some(0)),
+            mongo: ClientMongo::with_options(client_options)?,
             client: HttpClientBuilder::default().build(node_addr)?,
         })
     }
@@ -131,8 +166,7 @@ impl AppContex {
                 }
             };
 
-        let original_pow_difficulty = pow_difficulty.clone();
-
+        // Reverse the bytes of the public key
         let mut pub_key_extra = pub_key.clone().encode();
         pub_key_extra.reverse();
         let pub_key_extra = ecies_ed25519::PublicKey::from_bytes(&pub_key_extra).unwrap();
@@ -155,23 +189,14 @@ impl AppContex {
             no_shares_round,
         } = dynamic_diff;
 
-        if !no_shares_round {
-            if dynamic_difficulty > pow_difficulty {
-                pow_difficulty = dynamic_difficulty;
+        if dynamic_difficulty > pow_difficulty {
+            pow_difficulty = dynamic_difficulty;
 
-                // If the dynamic difficulty is higher than network's difficulty
-                // then the difficulty for the miner is the network's difficulty
-                if pow_difficulty >= win_difficulty {
-                    pow_difficulty = win_difficulty;
-                }
+            // If the dynamic difficulty is higher than network's difficulty
+            // then the difficulty for the miner is the network's difficulty
+            if pow_difficulty >= win_difficulty {
+                pow_difficulty = win_difficulty;
             }
-        } else {
-            pow_difficulty = original_pow_difficulty;
-            let mut lock_mp = self.dynamic_mp.lock().unwrap();
-            (*lock_mp) = Some(DynamicMiningParams {
-                dynamic_difficulty: pow_difficulty,
-                no_shares_round: false,
-            });
         }
 
         let mut lock = self.cur_state.lock().unwrap();
@@ -198,7 +223,7 @@ impl AppContex {
         ))
     }
 
-    pub(crate) async fn push_to_pool(&self, _hash: String, obj: String) -> Result<String, Error> {
+    pub(crate) async fn push_to_pool(&self, _hash: String, obj: String, wallet: String, rig_name: String) -> Result<String, Error> {
         let P3dParams { algo, sect, grid } = self.p3d_params.clone();
         let hash = H256::from_str(&_hash).unwrap();
 
@@ -288,145 +313,59 @@ impl AppContex {
 
                 let diff = get_hash_difficulty(&comp.get_work());
 
-                if diff >= difficulty {
-                    let payload = Payload {
-                        pool_id: self.pool_id.clone(),
-                        member_id: self.member_id.clone(),
-                        pre_hash,
-                        parent_hash,
-                        algo: self.p3d_params.algo.as_str().to_owned(),
-                        dfclty: diff.clone(),
-                        hash,
-                        obj_id: 1,
-                        obj: obj.as_bytes().to_vec(),
-                    };
+                self.submit_share(
+                    "pool-p3d",
+                    "shares",
+                    wallet.clone(),
+                    rig_name.clone(),
+                    diff,
+                ).await.unwrap();
 
-                    // Convert the payload to JSON string
-                    let message = serde_json::to_string(&payload).unwrap();
+                let response = self
+                    .client
+                    .request::<u64, _>(
+                        "poscan_pushMiningObject",
+                        rpc_params![serde_json::json!(1), serde_json::json!(obj)],
+                    )
+                    .await
+                    .unwrap();
 
-                    // Create a cryptographically secure PRNG from hash
-                    let mut csprng = StdRng::from_seed(hash.encode().try_into().unwrap());
-
-                    // Encrypt the message using the public key and csprng
-                    let encrypted = encrypt(&pub_key, message.as_bytes(), &mut csprng).unwrap();
-                    // Sign the encrypted message using the sign method
-                    let sign = self.sign(&encrypted);
-
-                    // Create RPC parameters using encrypted, self.member_id, and sign
-                    let params = rpc_params![
-                        serde_json::json!(encrypted.clone()),
-                        serde_json::json!(self.member_id.clone()),
-                        serde_json::json!(hex::encode(sign.to_bytes()))
-                    ];
-
+                if response == 0 {
                     log(format!(
                         "💎 Share found difficulty: {} :: Pool Difficulty: {} :: Chain difficulty: {}",
                         Style::new().bold().paint(format!("{:.2}", &diff)),
                         Style::new().bold().paint(format!("{:.2}", &pow_difficulty)),
                         &win_difficulty
                     ));
-
-                    // Make the RPC request to poscan_pushMiningObjectToPool method
-                    let _response: JsonValue = self
-                        .client
-                        .request("poscan_pushMiningObjectToPool", params)
-                        .await
-                        .map_err(|e| e)
-                        .unwrap();
-
-                    // Check the response value and print appropriate messages
-                    if _response == 0 {
-                        let message = format!(
-                            "{}",
-                            Style::new().bold().paint(format!("✅ Share accepted"))
-                        );
-
-                        log(message);
-
-                        let last_share_diff = {
-                            let params_lock = self.last_share_diff.lock().unwrap();
-                            if let Some(ls) = (*params_lock).clone() {
-                                ls
-                            } else {
-                                drop(params_lock);
-                                thread::sleep(Duration::from_millis(10));
-                                U256::zero()
-                            }
-                        };
-
-                        if last_share_diff == U256::zero() {
-                            let mut lock_mp = self.last_share_diff.lock().unwrap();
-                            (*lock_mp) = Some(diff.clone());
-                            thread::sleep(Duration::from_millis(10));
-                        }
-
-                        if diff > last_share_diff {
-                            let mut lock_mp = self.last_share_diff.lock().unwrap();
-                            (*lock_mp) = Some(diff.clone());
-                            thread::sleep(Duration::from_millis(10));
-                        }
-
-                        let mut accepted_shares = {
-                            let params_lock = self.accepted_shares.lock().unwrap();
-                            if let Some(ls) = (*params_lock).clone() {
-                                ls
-                            } else {
-                                drop(params_lock);
-                                thread::sleep(Duration::from_millis(10));
-                                0
-                            }
-                        };
-
-                        accepted_shares += 1;
-
-                        let mut lock_as = self.accepted_shares.lock().unwrap();
-                        (*lock_as) = Some(accepted_shares);
-                        thread::sleep(Duration::from_millis(10));
-                    } else {
-                        let message = format!("{}", Style::new().bold().paint("⛔ Share Rejected"));
-                        log(format!("{:?}", _response));
-                        log(message);
-
-                        let mut rejected_shares = {
-                            let params_lock = self.rejected_shares.lock().unwrap();
-                            if let Some(ls) = (*params_lock).clone() {
-                                ls
-                            } else {
-                                drop(params_lock);
-                                thread::sleep(Duration::from_millis(10));
-                                0
-                            }
-                        };
-
-                        rejected_shares += 1;
-
-                        if rejected_shares > 20 {
-                            let MiningParams { pow_difficulty, .. } = mining_params;
-
-                            if diff > pow_difficulty {
-                                let mut lock_mp = self.dynamic_mp.lock().unwrap();
-                                (*lock_mp) = Some(DynamicMiningParams {
-                                    dynamic_difficulty: diff.clone(),
-                                    no_shares_round: false,
-                                });
-                                log(format!("🦾 Difficulty set to {}", diff.clone()));
-                            }
-
-                            let mut lock_mp = self.rejected_shares.lock().unwrap();
-                            (*lock_mp) = Some(0);
-                            thread::sleep(Duration::from_millis(10));
-                        } else {
-                            let mut lock_mp = self.rejected_shares.lock().unwrap();
-                            (*lock_mp) = Some(rejected_shares);
-                            thread::sleep(Duration::from_millis(10));
-                        }
-                    }
+                    self.adjust_difficulty(wallet, rig_name).await.unwrap();
                 }
                 break;
             }
             break;
         }
         Ok(String::from("Pushed to pool for validation"))
+    }
+
+    async fn submit_share(
+        &self,
+        db_name: &str,
+        coll_name: &str,
+        miner_wallet: String,
+        rig_name: String,
+        difficulty: U256,
+    ) -> anyhow::Result<u64> {
+        let db = self.mongo.database(db_name);
+        let coll = db.collection::<Share>(coll_name);
+        let share = Share {
+            miner_wallet,
+            rig_name,
+            timestamp: DateTime::now(),
+            difficulty,
+            accounted: false,
+            paid: false,
+        };
+        coll.insert_one(share, None).await?;
+        Ok(0)
     }
 
     pub(crate) async fn push_stats(
@@ -437,7 +376,7 @@ impl AppContex {
         hashrate: String,
         good_hashrate: String,
     ) -> Result<String, Error> {
-        let payload = StatsPayload {
+        let _payload = StatsPayload {
             name,
             cores,
             tag,
@@ -456,89 +395,128 @@ impl AppContex {
         Ok(String::from("WIP"))
     }
 
-    fn sign(&self, msg: &[u8]) -> Signature {
-        // Define a constant CTX as a byte array with the value "Mining pool"
-        const CTX: &[u8] = b"Mining pool";
-
-        // Call the `sign_simple` method on the `self.key` object (a private key)
-        // Pass in the CTX, the message (msg), and the public key derived from the private key
-        self.key.sign_simple(CTX, msg, &self.key.to_public())
-    }
-
     fn store_stats(&self, message: Message) -> Result<String, Error> {
-        let mut con = connect();
-        let payload = serde_json::to_string(&message)?;
-        let result: String = con.set(message.channel, payload).map_err(|e| e).unwrap();
-        let response = format!("{}", result);
-        Ok(response)
+        Ok(String::from("store_stats"))
     }
 
-    pub fn adjust_difficulty(&self) {
-        log(String::from("💯 Difficulty background task started"));
+    async fn get_miner_shares(
+        &self,
+        db_name: &str,
+        coll_name: &str,
+        miner_wallet: String,
+        rig_name: String,
+    ) -> anyhow::Result<Vec<Share>> {
+        let db = self.mongo.database(db_name);
+        let coll = db.collection::<Share>(coll_name);
+        let filter = doc! {"miner_wallet": miner_wallet, "rig_name": rig_name ,"accounted": false};
+        let find_options = FindOptions::builder()
+            .sort(doc! { "timestamp": -1 })
+            .build();
+        let mut cursor: Cursor<Share> = coll.find(filter, find_options).await?;
 
-        loop {
-            thread::sleep(Duration::from_secs(600));
+        let mut result = Vec::new();
 
-            let last_share_diff = {
-                let params_lock = self.last_share_diff.lock().unwrap();
-                if let Some(ls) = (*params_lock).clone() {
-                    ls
-                } else {
-                    drop(params_lock);
-                    thread::sleep(Duration::from_millis(10));
-                    U256::zero()
-                }
-            };
-
-            let accepted_shares = {
-                let params_lock = self.accepted_shares.lock().unwrap();
-                if let Some(ls) = (*params_lock).clone() {
-                    ls
-                } else {
-                    drop(params_lock);
-                    thread::sleep(Duration::from_millis(10));
-                    0
-                }
-            };
-
-            let mining_params = {
-                let params_lock = self.cur_state.lock().unwrap();
-                if let Some(mp) = (*params_lock).clone() {
-                    mp
-                } else {
-                    drop(params_lock);
-                    thread::sleep(Duration::from_millis(10));
-                    MiningParams::default()
-                }
-            };
-
-            let MiningParams { pow_difficulty, .. } = mining_params;
-
-            if accepted_shares > 0 {
-                if accepted_shares >= 5 {
-                    let mut lock_mp = self.dynamic_mp.lock().unwrap();
-                    (*lock_mp) = Some(DynamicMiningParams {
-                        dynamic_difficulty: last_share_diff,
-                        no_shares_round: false,
-                    });
-                    log(format!("🦾 New difficulty set to {}", last_share_diff));
-                } else {
-                    log(format!("🦾 Difficulty remains {}", pow_difficulty));
-                }
-
-                let mut lock_as = self.accepted_shares.lock().unwrap();
-                (*lock_as) = Some(0);
-                thread::sleep(Duration::from_millis(10));
-            } else {
-                let mut lock_mp = self.dynamic_mp.lock().unwrap();
-                (*lock_mp) = Some(DynamicMiningParams {
-                    dynamic_difficulty: last_share_diff,
-                    no_shares_round: true,
-                });
-                log(format!(
-                    "⏱️ No shares found for the last round, restarting difficulty"
-                ));
-            }
+        while cursor.advance().await? {
+            let share = cursor.deserialize_current()?;
+            result.push(share);
         }
+
+        Ok(result)
+    }
+
+    pub async fn adjust_difficulty(
+        &self,
+        wallet: String,
+        rig_name: String,
+    ) -> anyhow::Result<()> {
+        log(String::from("💯 Difficulty adjustment started"));
+        let db_name = "pool-p3d";
+        let coll_name = "shares";
+
+        // thread::sleep(Duration::from_secs(60));
+        // let coll_difficulties = "difficulties";
+
+        let mut shares = self
+            .get_miner_shares(db_name, coll_name, wallet.clone(), rig_name.clone())
+            .await
+            .unwrap();
+
+        if shares.len() > 5 {
+            shares.sort_by_key(|share| share.timestamp);
+
+            let mut data = vec![None; DIFFICULTY_ADJUST_WINDOW as usize];
+            for i in 1..shares.len() {
+                data[i - 1] = Some(DifficultyAndTimestamp {
+                    timestamp: shares[i].timestamp.timestamp_millis(),
+                    difficulty: shares[i].difficulty,
+                });
+            }
+
+            let mut ts_delta = 0;
+            for i in 1..DIFFICULTY_ADJUST_WINDOW as usize {
+                let prev = data[i - 1].as_ref().map(|d| d.timestamp);
+                let cur = data[i].as_ref().map(|d| d.timestamp);
+
+                let delta = match (prev, cur) {
+                    (Some(prev), Some(cur)) => cur.saturating_sub(prev),
+                    _ => TARGET_BLOCK_TIME as i64,
+                };
+                ts_delta += delta;
+            }
+
+            if ts_delta == 0 {
+                ts_delta = 1;
+            }
+
+            let mut diff_sum = U256::zero();
+            for i in 0..DIFFICULTY_ADJUST_WINDOW as usize {
+                let diff = match data[i].as_ref().map(|d| d.difficulty) {
+                    Some(diff) => U256::from(diff),
+                    None => U256::from(INITIAL_DIFFICULTY),
+                };
+                diff_sum += diff;
+            }
+
+            if diff_sum < U256::from(MIN_DIFFICULTY) {
+                diff_sum = U256::from(MIN_DIFFICULTY);
+            }
+
+            let adj_ts = self.clamp(
+                self.damp(
+                    ts_delta as u128,
+                    BLOCK_TIME as u128,
+                    DIFFICULTY_DAMP_FACTOR,
+                ),
+                BLOCK_TIME as u128,
+                CLAMP_FACTOR,
+            );
+
+            let difficulty = min(
+                U256::from(MAX_DIFFICULTY),
+                max(
+                    U256::from(MIN_DIFFICULTY),
+                    diff_sum * U256::from(TARGET_BLOCK_TIME) / U256::from(adj_ts),
+                ),
+            );
+
+            let mut lock_mp = self.dynamic_mp.lock().unwrap();
+            (*lock_mp) = Some(DynamicMiningParams {
+                dynamic_difficulty: difficulty,
+                no_shares_round: false,
+            });
+            log(format!("🦾 New adjusted difficulty set to {}", difficulty));
+        }
+
+        Ok(())
+    }
+
+    /// Move value linearly toward a goal
+    fn damp(&self, actual: u128, goal: u128, damp_factor: u128) -> u128 {
+        (actual + (damp_factor - 1) * goal) / damp_factor
+    }
+
+    /// limit value to be within some factor from a goal
+    fn clamp(&self, actual: u128, goal: u128, clamp_factor: u128) -> u128 {
+        max(goal / clamp_factor, min(actual, goal * clamp_factor))
     }
 }

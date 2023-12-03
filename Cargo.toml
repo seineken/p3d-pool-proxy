@@ -18,6 +18,7 @@ tower = { version = "0.4.13", features = ["full"] }
 hyper = "0.14.20"
 sha3 = "0.10.7"
 ansi_term = "0.12.1"
+mongodb = "2.7.1"
 
 primitive-types = { version = "0.11", default-features = false, features = ["serde"] }
 ecies-ed25519 = { version = "0.5" }

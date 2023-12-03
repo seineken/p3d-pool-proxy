@@ -1,9 +1,6 @@
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::core::async_trait;
 use jsonrpsee::proc_macros::rpc;
-use redis::Commands;
-
-use crate::utils::connect;
 
 #[rpc(server, client)]
 pub trait StatsRpc {
@@ -28,8 +25,6 @@ impl StatsRpcServer for StatsRpcServerImpl {
 		&self,
         member_id: String
 	) -> RpcResult<String> {
-		let mut con = connect();
-		let response = con.get(member_id.clone()).map_err(|e| e).unwrap();
-		Ok(response)
+		Ok(String::from(""))
 	}  
 }
